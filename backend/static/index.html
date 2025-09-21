@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consulta API</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; text-align: center; }
+        input { padding: 10px; margin: 5px; width: calc(100% - 22px); border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; }
+        button:hover { background-color: #0056b3; }
+        #result { margin-top: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; font-weight: bold; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Consulta de Número de Radicación</h1>
+        <input type="text" id="numero" placeholder="Ingresa el número de 23 dígitos" maxlength="23">
+        <button onclick="queryAPI()">Consultar Ahora</button>
+        <button onclick="setNumero()">Configurar para Consultas Diarias</button>
+        <div id="result"></div>
+    </div>
+
+    <script>
+        function displayProcessData(data) {
+            if (!data.procesos || data.procesos.length === 0) {
+                document.getElementById('result').innerHTML = '<p>No se encontraron procesos.</p>';
+                return;
+            }
+            const proceso = data.procesos[0]; // Asumiendo que hay uno
+
+            // Parsear sujetos procesales
+            const sujetos = proceso.sujetosProcesales.split(' | ');
+            let demandante = '';
+            let demandado = '';
+            sujetos.forEach(sujeto => {
+                if (sujeto.startsWith('Demandante:')) {
+                    demandante = sujeto.replace('Demandante: ', '');
+                } else if (sujeto.startsWith('Demandado:')) {
+                    demandado = sujeto.replace('Demandado: ', '');
+                }
+            });
+
+            const html = `
+                <h2>Detalles del Proceso Judicial</h2>
+                <table>
+                    <tr><th>Campo</th><th>Valor</th></tr>
+                    <tr><td>Número de Radicación</td><td>${proceso.llaveProceso}</td></tr>
+                    <tr><td>Fecha del Proceso</td><td>${new Date(proceso.fechaProceso).toLocaleDateString('es-CO')}</td></tr>
+                    <tr><td>Última Actuación</td><td>${new Date(proceso.fechaUltimaActuacion).toLocaleDateString('es-CO')}</td></tr>
+                    <tr><td>Despacho</td><td>${proceso.despacho}</td></tr>
+                    <tr><td>Departamento</td><td>${proceso.departamento}</td></tr>
+                    <tr><td>Demandante</td><td>${demandante}</td></tr>
+                    <tr><td>Demandado</td><td>${demandado}</td></tr>
+                    <tr><td>Privado</td><td>${proceso.esPrivado ? 'Sí' : 'No'}</td></tr>
+                    <tr><td>ID Proceso</td><td>${proceso.idProceso}</td></tr>
+                </table>
+            `;
+            document.getElementById('result').innerHTML = html;
+        }
+
+        async function queryAPI() {
+            const numero = document.getElementById('numero').value;
+            if (numero.length !== 23 || isNaN(numero)) {
+                document.getElementById('result').textContent = 'Número inválido. Debe ser 23 dígitos.';
+                return;
+            }
+            try {
+                const response = await fetch(`http://127.0.0.1:8001/query/${numero}`);
+                const data = await response.json();
+                if (response.ok) {
+                    displayProcessData(data.data);
+                } else {
+                    document.getElementById('result').innerHTML = `<p class="error">${data.detail}</p>`;
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+            }
+        }
+
+        async function setNumero() {
+            const numero = document.getElementById('numero').value;
+            if (numero.length !== 23 || isNaN(numero)) {
+                document.getElementById('result').textContent = 'Número inválido. Debe ser 23 dígitos.';
+                return;
+            }
+            try {
+                const response = await fetch(`http://127.0.0.1:8001/set_numero/${numero}`, { method: 'POST' });
+                const data = await response.json();
+                if (response.ok) {
+                    document.getElementById('result').innerHTML = '<p class="success">Número configurado para consultas diarias.</p>';
+                } else {
+                    document.getElementById('result').innerHTML = `<p class="error">${data.detail}</p>`;
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
