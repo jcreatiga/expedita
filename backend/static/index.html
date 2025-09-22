@@ -3,154 +3,419 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Consulta API</title>
+    <title>Sistema de Consulta Judicial</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f4f4f4; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         h1 { color: #333; text-align: center; }
-        input { padding: 10px; margin: 5px; width: calc(100% - 22px); border: 1px solid #ccc; border-radius: 4px; }
+        .auth-section, .app-section { display: none; }
+        .auth-section.show, .app-section.show { display: block; }
+        input, textarea { padding: 10px; margin: 5px; width: calc(100% - 22px); border: 1px solid #ccc; border-radius: 4px; }
+        textarea { height: 100px; resize: vertical; }
         button { padding: 10px 20px; margin: 5px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; }
         button:hover { background-color: #0056b3; }
+        button.secondary { background-color: #6c757d; }
+        button.secondary:hover { background-color: #545b62; }
+        button.danger { background-color: #dc3545; }
+        button.danger:hover { background-color: #c82333; }
         #result { margin-top: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background-color: #f8f9fa; font-weight: bold; }
+        .highlight-today { background-color: #d4edda !important; border-left: 4px solid #28a745; }
         .error { color: red; }
         .success { color: green; }
+        .user-info { background-color: #f8f9fa; padding: 10px; margin-bottom: 20px; border-radius: 4px; }
+        .tabs { margin-bottom: 20px; }
+        .tab-button { background-color: #e9ecef; border: none; padding: 10px 20px; margin-right: 5px; cursor: pointer; }
+        .tab-button.active { background-color: #007bff; color: white; }
+        .process-actions { display: flex; gap: 5px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Consulta de Número de Radicación</h1>
-        <input type="text" id="numero" placeholder="Ingresa el número de 23 dígitos" maxlength="23">
-        <button onclick="queryAPI()">Consultar Ahora</button>
-        <button onclick="setNumero()">Configurar para Consultas Diarias</button>
-        <button onclick="getDetalle()" id="detalleBtn" style="display:none;">Ver Detalles del Proceso</button>
-        <div id="result"></div>
+        <!-- Authentication Section -->
+        <div id="auth-section" class="auth-section show">
+            <h1>Sistema de Consulta Judicial</h1>
+            <div id="auth-forms">
+                <div id="login-form">
+                    <h2>Iniciar Sesión</h2>
+                    <input type="email" id="login-email" placeholder="Correo electrónico" required>
+                    <input type="password" id="login-password" placeholder="Contraseña" required>
+                    <button onclick="login()">Iniciar Sesión</button>
+                    <p><a href="#" onclick="showRegister()">¿No tienes cuenta? Regístrate</a></p>
+                </div>
+                <div id="register-form" style="display: none;">
+                    <h2>Registro</h2>
+                    <input type="email" id="register-email" placeholder="Correo electrónico" required>
+                    <input type="password" id="register-password" placeholder="Contraseña" required>
+                    <button onclick="register()">Registrarse</button>
+                    <p><a href="#" onclick="showLogin()">¿Ya tienes cuenta? Inicia sesión</a></p>
+                </div>
+            </div>
+            <div id="auth-result"></div>
+        </div>
+
+        <!-- Main Application Section -->
+        <div id="app-section" class="app-section">
+            <div class="user-info">
+                <span id="user-email"></span>
+                <button onclick="logout()" class="secondary">Cerrar Sesión</button>
+            </div>
+
+            <div class="tabs">
+                <button class="tab-button active" onclick="showTab('query')">Consultar Procesos</button>
+                <button class="tab-button" onclick="showTab('saved')">Mis Procesos Guardados</button>
+            </div>
+
+            <!-- Query Tab -->
+            <div id="query-tab">
+                <h2>Consulta de Procesos Judiciales</h2>
+                <p>Ingresa hasta 10 números de radicación separados por comas:</p>
+                <textarea id="batch-numbers" placeholder="11001418902420250012300, 11001418902420250012301, ..."></textarea>
+                <button onclick="batchQuery()">Consultar Procesos</button>
+                <div id="query-result"></div>
+            </div>
+
+            <!-- Saved Processes Tab -->
+            <div id="saved-tab" style="display: none;">
+                <h2>Mis Procesos Guardados</h2>
+                <button onclick="loadSavedProcesses()">Actualizar Lista</button>
+                <div id="saved-result"></div>
+            </div>
+        </div>
     </div>
 
     <script>
-        function displayProcessData(data) {
-            if (!data.procesos || data.procesos.length === 0) {
-                document.getElementById('result').innerHTML = '<p>No se encontraron procesos.</p>';
-                document.getElementById('detalleBtn').style.display = 'none';
-                currentIdProceso = null;
-                return;
+        let authToken = localStorage.getItem('authToken');
+        let currentUser = null;
+
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', function() {
+            if (authToken) {
+                showApp();
+            } else {
+                showAuth();
             }
-            const proceso = data.procesos[0]; // Asumiendo que hay uno
+        });
 
-            // Store the process ID for detailed queries
-            currentIdProceso = proceso.idProceso;
-
-            // Parsear sujetos procesales
-            const sujetos = proceso.sujetosProcesales.split(' | ');
-            let demandante = '';
-            let demandado = '';
-            sujetos.forEach(sujeto => {
-                if (sujeto.startsWith('Demandante:')) {
-                    demandante = sujeto.replace('Demandante: ', '');
-                } else if (sujeto.startsWith('Demandado:')) {
-                    demandado = sujeto.replace('Demandado: ', '');
-                }
-            });
-
-            const html = `
-                <h2>Información Básica del Proceso Judicial</h2>
-                <table>
-                    <tr><th>Campo</th><th>Valor</th></tr>
-                    <tr><td>Número de Radicación</td><td>${proceso.llaveProceso}</td></tr>
-                    <tr><td>Fecha del Proceso</td><td>${new Date(proceso.fechaProceso).toLocaleDateString('es-CO')}</td></tr>
-                    <tr><td>Última Actuación</td><td>${new Date(proceso.fechaUltimaActuacion).toLocaleDateString('es-CO')}</td></tr>
-                    <tr><td>Despacho</td><td>${proceso.despacho}</td></tr>
-                    <tr><td>Departamento</td><td>${proceso.departamento}</td></tr>
-                    <tr><td>Demandante</td><td>${demandante}</td></tr>
-                    <tr><td>Demandado</td><td>${demandado}</td></tr>
-                    <tr><td>Privado</td><td>${proceso.esPrivado ? 'Sí' : 'No'}</td></tr>
-                    <tr><td>ID Proceso</td><td>${proceso.idProceso}</td></tr>
-                </table>
-            `;
-            document.getElementById('result').innerHTML = html;
-
-            // Show the detail button
-            document.getElementById('detalleBtn').style.display = 'inline-block';
+        // Authentication functions
+        function showAuth() {
+            document.getElementById('auth-section').classList.add('show');
+            document.getElementById('app-section').classList.remove('show');
         }
 
-        function displayDetailedData(data, cached = false) {
-            let html = `<h2>Detalles Completos del Proceso Judicial ${cached ? '(Cacheado)' : '(Actual)'}</h2>`;
+        function showApp() {
+            document.getElementById('auth-section').classList.remove('show');
+            document.getElementById('app-section').classList.add('show');
+            loadUserInfo();
+        }
 
-            if (data && typeof data === 'object') {
-                html += '<table><tr><th>Campo</th><th>Valor</th></tr>';
+        function showLogin() {
+            document.getElementById('login-form').style.display = 'block';
+            document.getElementById('register-form').style.display = 'none';
+        }
 
-                // Display all key-value pairs from the detailed data
-                Object.entries(data).forEach(([key, value]) => {
-                    const displayValue = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
-                    html += `<tr><td>${key}</td><td>${displayValue}</td></tr>`;
+        function showRegister() {
+            document.getElementById('login-form').style.display = 'none';
+            document.getElementById('register-form').style.display = 'block';
+        }
+
+        async function register() {
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+
+            if (!email || !password) {
+                showAuthResult('Por favor completa todos los campos', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
                 });
 
-                html += '</table>';
-            } else {
-                html += '<p>No se pudieron obtener los detalles del proceso.</p>';
-            }
-
-            document.getElementById('result').innerHTML = html;
-        }
-
-        async function queryAPI() {
-            const numero = document.getElementById('numero').value;
-            if (numero.length !== 23 || isNaN(numero)) {
-                document.getElementById('result').textContent = 'Número inválido. Debe ser 23 dígitos.';
-                return;
-            }
-            try {
-                const response = await fetch(`/query/${numero}`);
                 const data = await response.json();
+
                 if (response.ok) {
-                    displayProcessData(data.data);
+                    authToken = data.access_token;
+                    localStorage.setItem('authToken', authToken);
+                    showAuthResult('Registro exitoso! Iniciando sesión...', 'success');
+                    setTimeout(() => showApp(), 1000);
                 } else {
-                    document.getElementById('result').innerHTML = `<p class="error">${data.detail}</p>`;
+                    showAuthResult(data.detail || 'Error en el registro', 'error');
                 }
             } catch (error) {
-                document.getElementById('result').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                showAuthResult('Error de conexión', 'error');
             }
         }
 
-        let currentIdProceso = null;
+        async function login() {
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
 
-        async function setNumero() {
-            const numero = document.getElementById('numero').value;
-            if (numero.length !== 23 || isNaN(numero)) {
-                document.getElementById('result').textContent = 'Número inválido. Debe ser 23 dígitos.';
-                return;
-            }
-            try {
-                const response = await fetch(`/set_numero/${numero}`, { method: 'POST' });
-                const data = await response.json();
-                if (response.ok) {
-                    document.getElementById('result').innerHTML = '<p class="success">Número configurado para consultas diarias.</p>';
-                } else {
-                    document.getElementById('result').innerHTML = `<p class="error">${data.detail}</p>`;
-                }
-            } catch (error) {
-                document.getElementById('result').innerHTML = `<p class="error">Error: ${error.message}</p>`;
-            }
-        }
-
-        async function getDetalle() {
-            if (!currentIdProceso) {
-                document.getElementById('result').innerHTML = '<p class="error">No hay ID de proceso disponible.</p>';
+            if (!email || !password) {
+                showAuthResult('Por favor completa todos los campos', 'error');
                 return;
             }
 
             try {
-                const response = await fetch(`/detalle/${currentIdProceso}`);
+                const response = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
                 const data = await response.json();
+
                 if (response.ok) {
-                    displayDetailedData(data.data, data.cached);
+                    authToken = data.access_token;
+                    localStorage.setItem('authToken', authToken);
+                    showAuthResult('Inicio de sesión exitoso!', 'success');
+                    setTimeout(() => showApp(), 1000);
                 } else {
-                    document.getElementById('result').innerHTML = `<p class="error">${data.detail}</p>`;
+                    showAuthResult(data.detail || 'Error en el inicio de sesión', 'error');
                 }
             } catch (error) {
-                document.getElementById('result').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                showAuthResult('Error de conexión', 'error');
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            localStorage.removeItem('authToken');
+            currentUser = null;
+            showAuth();
+        }
+
+        function showAuthResult(message, type) {
+            const resultDiv = document.getElementById('auth-result');
+            resultDiv.innerHTML = `<p class="${type}">${message}</p>`;
+        }
+
+        async function loadUserInfo() {
+            if (!authToken) return;
+
+            try {
+                const response = await fetch('/auth/me', {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (response.ok) {
+                    currentUser = await response.json();
+                    document.getElementById('user-email').textContent = `Usuario: ${currentUser.email}`;
+                } else {
+                    logout(); // Token inválido
+                }
+            } catch (error) {
+                console.error('Error loading user info:', error);
+            }
+        }
+
+        // Tab management
+        function showTab(tabName) {
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.getElementById('query-tab').style.display = tabName === 'query' ? 'block' : 'none';
+            document.getElementById('saved-tab').style.display = tabName === 'saved' ? 'block' : 'none';
+
+            if (tabName === 'saved') {
+                loadSavedProcesses();
+            }
+        }
+
+        // Batch query function
+        async function batchQuery() {
+            const numbers = document.getElementById('batch-numbers').value.trim();
+
+            if (!numbers) {
+                showQueryResult('Por favor ingresa al menos un número de radicación', 'error');
+                return;
+            }
+
+            const numberList = numbers.split(',').map(n => n.trim()).filter(n => n);
+            if (numberList.length > 10) {
+                showQueryResult('Máximo 10 procesos por consulta', 'error');
+                return;
+            }
+
+            // Validate numbers
+            for (const num of numberList) {
+                if (num.length !== 23 || isNaN(num)) {
+                    showQueryResult(`Número inválido: ${num}. Debe ser 23 dígitos.`, 'error');
+                    return;
+                }
+            }
+
+            showQueryResult('Consultando procesos...', 'success');
+
+            try {
+                const response = await fetch('/processes/batch-query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ numbers })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayBatchResults(data.results);
+                } else {
+                    showQueryResult(data.detail || 'Error en la consulta', 'error');
+                }
+            } catch (error) {
+                showQueryResult('Error de conexión', 'error');
+            }
+        }
+
+        function displayBatchResults(results) {
+            if (!results || results.length === 0) {
+                showQueryResult('No se encontraron procesos', 'error');
+                return;
+            }
+
+            let html = `
+                <h3>Resultados de la Consulta (${results.length} procesos)</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Número del Proceso</th>
+                            <th>Última Actuación</th>
+                            <th>Despacho</th>
+                            <th>Departamento</th>
+                            <th>Demandante</th>
+                            <th>Demandado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            results.forEach(process => {
+                const rowClass = process.is_today ? 'highlight-today' : '';
+                const fechaDisplay = process.fecha_ultima_actuacion
+                    ? new Date(process.fecha_ultima_actuacion).toLocaleDateString('es-CO')
+                    : 'N/A';
+
+                html += `
+                    <tr class="${rowClass}">
+                        <td>${process.numero}</td>
+                        <td>${fechaDisplay}</td>
+                        <td>${process.despacho || 'N/A'}</td>
+                        <td>${process.departamento || 'N/A'}</td>
+                        <td>${process.demandante || 'N/A'}</td>
+                        <td>${process.demandado || 'N/A'}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+                <p class="success">Procesos guardados en tu cuenta. Las filas verdes indican actualización hoy.</p>
+            `;
+
+            document.getElementById('query-result').innerHTML = html;
+        }
+
+        function showQueryResult(message, type) {
+            document.getElementById('query-result').innerHTML = `<p class="${type}">${message}</p>`;
+        }
+
+        // Saved processes functions
+        async function loadSavedProcesses() {
+            if (!authToken) return;
+
+            try {
+                const response = await fetch('/processes/my-processes', {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displaySavedProcesses(data.processes);
+                } else {
+                    document.getElementById('saved-result').innerHTML = `<p class="error">${data.detail}</p>`;
+                }
+            } catch (error) {
+                document.getElementById('saved-result').innerHTML = '<p class="error">Error de conexión</p>';
+            }
+        }
+
+        function displaySavedProcesses(processes) {
+            if (!processes || processes.length === 0) {
+                document.getElementById('saved-result').innerHTML = '<p>No tienes procesos guardados</p>';
+                return;
+            }
+
+            let html = `
+                <h3>Tus Procesos Guardados (${processes.length})</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Número del Proceso</th>
+                            <th>Última Actuación</th>
+                            <th>Despacho</th>
+                            <th>Departamento</th>
+                            <th>Demandante</th>
+                            <th>Demandado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            processes.forEach(process => {
+                const rowClass = process.is_today ? 'highlight-today' : '';
+                const fechaDisplay = process.fecha_ultima_actuacion
+                    ? new Date(process.fecha_ultima_actuacion).toLocaleDateString('es-CO')
+                    : 'N/A';
+
+                html += `
+                    <tr class="${rowClass}">
+                        <td>${process.numero}</td>
+                        <td>${fechaDisplay}</td>
+                        <td>${process.despacho || 'N/A'}</td>
+                        <td>${process.departamento || 'N/A'}</td>
+                        <td>${process.demandante || 'N/A'}</td>
+                        <td>${process.demandado || 'N/A'}</td>
+                        <td class="process-actions">
+                            <button onclick="deleteProcess(${process.id})" class="danger">Eliminar</button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+
+            document.getElementById('saved-result').innerHTML = html;
+        }
+
+        async function deleteProcess(processId) {
+            if (!confirm('¿Estás seguro de que quieres eliminar este proceso?')) return;
+
+            try {
+                const response = await fetch(`/processes/${processId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (response.ok) {
+                    loadSavedProcesses(); // Reload the list
+                } else {
+                    alert('Error al eliminar el proceso');
+                }
+            } catch (error) {
+                alert('Error de conexión');
             }
         }
     </script>
