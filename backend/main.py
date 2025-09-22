@@ -20,36 +20,54 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Decide database URL from environment (Railway provides DATABASE_URL for Postgres)
+# Railway will provide a DATABASE_URL for the managed Postgres instance.
 DB_URL = os.getenv('DATABASE_URL')
+
+# Detect whether the sqlite3 C-extension is importable in this runtime
+try:
+    import sqlite3  # type: ignore
+    SQLITE_AVAILABLE = True
+except Exception:
+    SQLITE_AVAILABLE = False
 
 def make_engine_from_url(db_url: str):
     """Create SQLAlchemy engine with sensible defaults depending on DB type."""
     if db_url.startswith('postgresql'):
-        # production (Railway) - use a small pool
         return create_engine(db_url, echo=True, pool_size=5, max_overflow=10)
-    else:
-        # sqlite or other - default creation
-        return create_engine(db_url, echo=True)
+    return create_engine(db_url, echo=True)
 
-# If DATABASE_URL is set (in Railway), use it; otherwise use local SQLite file
+# Choose DB strategy:
+# 1) If DATABASE_URL is set, use it (Postgres on Railway) - no fallback
+# 2) Else if sqlite3 is available, use a local file SQLite (development)
+# 3) Otherwise fail early with a clear error (ask user to set DATABASE_URL in Railway)
 if DB_URL:
     try:
         engine = make_engine_from_url(DB_URL)
-        logger.info(f"Using DATABASE_URL from environment: {DB_URL}")
+        logger.info("Using DATABASE_URL from environment")
     except Exception as e:
-        logger.error(f"Failed to create engine from DATABASE_URL: {e}. Falling back to in-memory SQLite.")
-        engine = create_engine('sqlite:///:memory:', echo=True)
+        logger.exception(f"Failed to create engine from DATABASE_URL: {e}")
+        raise RuntimeError(
+            f"Failed to connect to database using DATABASE_URL. "
+            f"Error: {e}. "
+            f"Please check your DATABASE_URL configuration in Railway."
+        )
 else:
-    # Local/development: use a file-based SQLite database in ./data/results.db
-    db_file = os.path.join('data', 'results.db')
-    os.makedirs(os.path.dirname(os.path.abspath(db_file)), exist_ok=True)
-    try:
-        engine = create_engine(f"sqlite:///{db_file}", echo=True)
-        logger.info(f"Using local SQLite DB at {db_file}")
-    except Exception as e:
-        logger.error(f"Failed to create local SQLite engine: {e}. Falling back to in-memory SQLite.")
-        engine = create_engine('sqlite:///:memory:', echo=True)
+    if SQLITE_AVAILABLE:
+        db_file = os.path.join('data', 'results.db')
+        os.makedirs(os.path.dirname(os.path.abspath(db_file)), exist_ok=True)
+        try:
+            engine = create_engine(f"sqlite:///{db_file}", echo=True)
+            logger.info(f"Using local SQLite DB at {db_file}")
+        except Exception as e:
+            logger.exception(f"Failed to create local SQLite engine: {e}")
+            raise
+    else:
+        # Runtime lacks sqlite shared library and no DATABASE_URL provided.
+        # Fail with a clear error so the user can set DATABASE_URL in Railway.
+        raise RuntimeError(
+            "No usable database available: sqlite3 C-extension not present and DATABASE_URL not set. "
+            "Set the Railway environment variable DATABASE_URL to your PostgreSQL connection string."
+        )
 
 Session = sessionmaker(bind=engine)
 
