@@ -42,6 +42,36 @@
     <link rel="stylesheet" href="/static/styles.css?v=2">
     <style>
         body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+        /* Truncate cells with hover-tooltips for long values */
+        .truncate-cell {
+            max-width: 200px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            position: relative;
+        }
+        .truncate-cell:hover .full-text {
+            display: block;
+        }
+        .full-text {
+            display: none;
+            position: absolute;
+            background-color: #374151;
+            color: #F9FAFB;
+            padding: 8px;
+            border-radius: 6px;
+            z-index: 50;
+            top: 100%;
+            left: 0;
+            white-space: normal;
+            width: max-content;
+            max-width: 520px;
+            box-shadow: 0 6px 18px rgba(2,6,23,0.7);
+        }
+
+        /* Small helper to visually hide table when empty */
+        .table-empty { padding: 28px; color: var(--secondary-text-dark); }
     </style>
 </head>
 <body class="bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark font-sans transition-colors duration-300">
@@ -370,31 +400,156 @@
         }
     }
 
-    function displayBatchResults(results){
+    // Store last results for sorting / re-render
+    let lastResults = [];
+
+    function renderResultsTable(results) {
         const container = document.getElementById('query-result');
-        if(!results || results.length === 0){
-            container.innerHTML = '<p class="text-secondary-text-light dark:text-secondary-text-dark">No hay resultados.</p>';
+        if (!results || results.length === 0) {
+            container.innerHTML = '<div class="table-empty p-6">No hay resultados.</div>';
             return;
         }
-        let html = '';
-        results.forEach(process => {
-            const status = process.is_active ? 'Activo' : 'Inactivo';
-            const statusColor = process.is_active ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-            html += `
-                <div class="bg-panel-light dark:bg-panel-dark p-6 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-                    <div class="flex justify-between items-start">
-                        <h3 class="text-lg font-bold text-text-light dark:text-text-dark">${process.numero}</h3>
-                        <span class="text-xs font-medium ${statusColor} px-2 py-1 rounded-full">${status}</span>
-                    </div>
-                    <p class="text-sm text-secondary-text-light dark:text-secondary-text-dark mt-2">${process.despacho || 'Información no disponible.'}</p>
-                    <div class="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4">
-                        <p class="text-sm"><span class="font-semibold text-secondary-text-light dark:text-secondary-text-dark">Demandante:</span> ${process.demandante || 'N/A'}</p>
-                        <p class="text-sm"><span class="font-semibold text-secondary-text-light dark:text-secondary-text-dark">Demandado:</span> ${process.demandado || 'N/A'}</p>
-                    </div>
+
+        // Table header with sortable columns
+        const html = `
+            <div class="bg-panel-light dark:bg-panel-dark rounded-lg shadow-md overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table id="results-table" class="w-full text-sm text-left text-secondary-text-light dark:text-secondary-text-dark table-auto">
+                        <thead class="text-xs text-text-light dark:text-text-dark uppercase bg-background-light dark:bg-background-dark">
+                            <tr>
+                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('numero')">Radicado</th>
+                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('demandante')">Demandante</th>
+                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('demandado')">Demandado</th>
+                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('despacho')">Juzgado</th>
+                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('clase_proceso')">Clase</th>
+                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('ubicacion')">Ubicación</th>
+                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('fecha_ultima_actuacion')">Fecha Última Actuación</th>
+                                <th class="px-6 py-3">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-tbody">
+                        </tbody>
+                    </table>
                 </div>
-            `;
-        });
+            </div>
+        `;
         container.innerHTML = html;
+
+        // Populate rows
+        const tbody = document.getElementById('results-tbody');
+        tbody.innerHTML = '';
+        results.forEach(proc => {
+            const fecha = proc.fecha_ultima_actuacion ? (new Date(proc.fecha_ultima_actuacion)).toLocaleDateString('es-CO') : 'N/A';
+            const demandante = proc.demandante || 'N/A';
+            const demandado = proc.demandado || 'N/A';
+            const despacho = proc.despacho || 'Información no disponible.';
+            const clase = proc.clase_proceso || proc.claseProceso || 'N/A';
+            const ubic = proc.ubicacion || proc.ubicacion || 'N/A';
+
+            const row = document.createElement('tr');
+            row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
+
+            row.innerHTML = `
+                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row">${proc.numero}</th>
+                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandante)}</span><span class="full-text">${escapeHtml(demandante)}</span></td>
+                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandado)}</span><span class="full-text">${escapeHtml(demandado)}</span></td>
+                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(despacho)}</span><span class="full-text">${escapeHtml(despacho)}</span></td>
+                <td class="px-6 py-4 truncate-cell">${escapeHtml(clase)}</td>
+                <td class="px-6 py-4 truncate-cell">${escapeHtml(ubic)}</td>
+                <td class="px-6 py-4">${escapeHtml(fecha)}</td>
+                <td class="px-6 py-4 text-right">
+                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess('${proc.numero}', ${encodeURIComponent(JSON.stringify(proc))})">
+                        <span class="material-icons text-sm">bookmark_add</span>
+                        Guardar
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    function displayBatchResults(results){
+        // Normalize results (ensure keys for clase_proceso/ubicacion exist)
+        lastResults = results.map(r => {
+            return {
+                ...r,
+                clase_proceso: r.clase_proceso || r.claseProceso || '',
+                ubicacion: r.ubicacion || r.ubicacion || '',
+                fecha_ultima_actuacion: r.fecha_ultima_actuacion || r.fechaUltimaActuacion || r.fechaUltimaActuacionISO || null
+            };
+        });
+        renderResultsTable(lastResults);
+    }
+
+    // Simple sort implementation (toggles asc/desc)
+    let currentSort = { col: null, dir: 1 }; // 1 asc, -1 desc
+    function sortTable(col){
+        if (!col) return;
+        if (currentSort.col === col) currentSort.dir = -currentSort.dir;
+        else { currentSort.col = col; currentSort.dir = 1; }
+
+        lastResults.sort((a,b) => {
+            const va = (a[col] || '').toString().toLowerCase();
+            const vb = (b[col] || '').toString().toLowerCase();
+            if (va < vb) return -1 * currentSort.dir;
+            if (va > vb) return 1 * currentSort.dir;
+            return 0;
+        });
+        renderResultsTable(lastResults);
+    }
+
+    // Helper to POST saved process to backend
+    async function saveProcess(numero, procString) {
+        try {
+            const proc = JSON.parse(decodeURIComponent(procString));
+            const payload = {
+                numero: proc.numero || numero,
+                id_proceso: proc.id_proceso || proc.idProceso || proc.id_proceso || '',
+                fecha_ultima_actuacion: proc.fecha_ultima_actuacion || proc.fechaUltimaActuacion || null,
+                despacho: proc.despacho || '',
+                departamento: proc.departamento || '',
+                demandante: proc.demandante || '',
+                demandado: proc.demandado || '',
+                response_json: proc.response_json || proc.responseJson || null,
+                detalle_json: proc.detalle_json || proc.detalleJson || null,
+                tipo_proceso: proc.tipo_proceso || '',
+                clase_proceso: proc.clase_proceso || '',
+                subclase_proceso: proc.subclase_proceso || '',
+                recurso: proc.recurso || '',
+                ponente: proc.ponente || '',
+                ubicacion: proc.ubicacion || ''
+            };
+
+            const resp = await fetch('/processes/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await resp.json();
+            if (resp.ok) {
+                alert(`Proceso ${numero} guardado (${data.action})`);
+            } else {
+                alert(`Error guardando proceso: ${data.detail || JSON.stringify(data)}`);
+            }
+        } catch (err) {
+            console.error('saveProcess error:', err);
+            alert('Error guardando proceso (ver consola).');
+        }
+    }
+
+    // Utility to escape HTML in table cells
+    function escapeHtml(text){
+        if (text === null || text === undefined) return '';
+        return String(text)
+            .replace(/&/g, '&')
+            .replace(/</g, '<')
+            .replace(/>/g, '>')
+            .replace(/"/g, '"')
+            .replace(/'/g, '&#039;');
     }
 
     async function testAPIConnection(){

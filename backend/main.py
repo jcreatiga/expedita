@@ -106,6 +106,12 @@ if engine:
         departamento = Column(String(255))
         demandante = Column(String(255))
         demandado = Column(String(255))
+        tipo_proceso = Column(String(255))
+        clase_proceso = Column(String(255))
+        subclase_proceso = Column(String(255))
+        recurso = Column(String(255))
+        ponente = Column(String(255))
+        ubicacion = Column(String(255))
         created_at = Column(DateTime, default=datetime.datetime.utcnow)
         updated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -487,7 +493,7 @@ def query_api(numero: str):
 
 # Helper function to process a single judicial process
 async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_address="", user_agent="") -> dict:
-    """Process a single judicial process query and return structured data"""
+    """Process a single judicial process query, fetch detail (if available) and return structured data"""
     start_time = time.time()
 
     if len(numero) != 23 or not numero.isdigit():
@@ -496,11 +502,10 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
         log_query(db, user_id, numero, "single_query", "error", message, 0, ip_address, user_agent)
         return {"error": message, "numero": numero}
 
-    url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
-    print(f"DEBUG: Querying URL: {url}")
+    consulta_url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
+    print(f"DEBUG: Querying URL: {consulta_url}")
 
     try:
-        # Try direct HTTP request first with enhanced headers
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
@@ -508,16 +513,13 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Referer': 'https://consultaprocesos.ramajudicial.gov.co:448/',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache'
         }
 
         print(f"DEBUG: Making HTTP request to judicial API for {numero}")
-        response = requests.get(url, headers=headers, timeout=60, verify=False)
-        response_time = int((time.time() - start_time) * 1000)  # milliseconds
+        response = requests.get(consulta_url, headers=headers, timeout=60, verify=False)
+        response_time = int((time.time() - start_time) * 1000)
         print(f"DEBUG: Response status: {response.status_code}, Time: {response_time}ms")
         response.raise_for_status()
         data = response.json()
@@ -525,22 +527,40 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
 
         log_query(db, user_id, numero, "single_query", "success", f"Status: {response.status_code}", response_time, ip_address, user_agent)
 
-        # Extract process data
+        # Default values
+        id_proceso = ''
+        demandante = ''
+        demandado = ''
+        despacho = ''
+        departamento = ''
+        fecha_ultima_actuacion = None
+        detalle_json = None
+        tipo_proceso = ''
+        clase_proceso = ''
+        subclase_proceso = ''
+        recurso = ''
+        ponente = ''
+        ubicacion = ''
+
+        # Extract main consulta data
         if 'procesos' in data and len(data['procesos']) > 0:
             proceso = data['procesos'][0]
+            id_proceso = str(proceso.get('idProceso', ''))
+            despacho = proceso.get('despacho', '') or ''
+            departamento = proceso.get('departamento', '') or ''
 
-            # Parse sujetos procesales
-            sujetos = proceso.get('sujetosProcesales', '').split(' | ')
-            demandante = ''
-            demandado = ''
-            for sujeto in sujetos:
+            sujetos = proceso.get('sujetosProcesales', '')
+            if isinstance(sujetos, str):
+                sujetos_list = sujetos.split(' | ')
+            else:
+                sujetos_list = []
+
+            for sujeto in sujetos_list:
                 if sujeto.startswith('Demandante:'):
-                    demandante = sujeto.replace('Demandante: ', '')
+                    demandante = sujeto.replace('Demandante: ', '').strip()
                 elif sujeto.startswith('Demandado:'):
-                    demandado = sujeto.replace('Demandado: ', '')
+                    demandado = sujeto.replace('Demandado: ', '').strip()
 
-            # Parse fecha
-            fecha_ultima_actuacion = None
             if proceso.get('fechaUltimaActuacion'):
                 try:
                     fecha_obj = datetime.datetime.fromisoformat(proceso['fechaUltimaActuacion'].replace('Z', '+00:00'))
@@ -548,15 +568,46 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
                 except:
                     pass
 
+            # Keep the raw consulta JSON
+            response_json = json.dumps(data)
+
+            # If we have an id_proceso, try to fetch detailed info
+            if id_proceso and id_proceso.isdigit():
+                detalle_url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Proceso/Detalle/{id_proceso}"
+                try:
+                    det_resp = requests.get(detalle_url, headers=headers, timeout=30, verify=False)
+                    det_resp.raise_for_status()
+                    detalle = det_resp.json()
+                    detalle_json = json.dumps(detalle)
+
+                    # Map expected fields from detalle
+                    tipo_proceso = detalle.get('tipoProceso', '') or detalle.get('tipo_proceso', '') or ''
+                    clase_proceso = detalle.get('claseProceso', '') or detalle.get('clase_proceso', '') or ''
+                    subclase_proceso = detalle.get('subclaseProceso', '') or detalle.get('subclase_proceso', '') or ''
+                    recurso = detalle.get('recurso', '') or ''
+                    ponente = detalle.get('ponente', '') or ''
+                    ubicacion = detalle.get('ubicacion', '') or ''
+
+                except Exception as det_err:
+                    # Log but continue; detailed info is optional for frontend display
+                    print(f"DEBUG: Failed to fetch detalle for id_proceso={id_proceso}: {det_err}")
+
             return {
                 "numero": numero,
-                "id_proceso": str(proceso.get('idProceso', '')),
+                "id_proceso": id_proceso,
                 "fecha_ultima_actuacion": fecha_ultima_actuacion,
-                "despacho": proceso.get('despacho', ''),
-                "departamento": proceso.get('departamento', ''),
+                "despacho": despacho,
+                "departamento": departamento,
                 "demandante": demandante,
                 "demandado": demandado,
-                "response_json": json.dumps(data),
+                "response_json": response_json,
+                "detalle_json": detalle_json,
+                "tipo_proceso": tipo_proceso,
+                "clase_proceso": clase_proceso,
+                "subclase_proceso": subclase_proceso,
+                "recurso": recurso,
+                "ponente": ponente,
+                "ubicacion": ubicacion,
                 "success": True
             }
         else:
@@ -598,6 +649,13 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
             "demandante": "JUAN PEREZ",
             "demandado": "MARIA GOMEZ",
             "response_json": json.dumps({"procesos": []}),
+            "detalle_json": None,
+            "tipo_proceso": "",
+            "clase_proceso": "",
+            "subclase_proceso": "",
+            "recurso": "",
+            "ponente": "",
+            "ubicacion": "",
             "success": True,
             "mock": True,
             "error": str(e)
@@ -758,6 +816,138 @@ async def batch_query_processes(
 
     print(f"DEBUG: Batch query completed. Returning {len(processed_results)} results and {len(errors)} errors")
     return {"results": processed_results, "total_processed": len(processed_results), "errors": errors}
+
+# API endpoint: save a single process for the current user
+@app.post("/processes/save")
+async def save_process(
+    payload: dict,
+    current_user = Depends(get_current_user),
+    db = Depends(get_db)
+):
+    """
+    Save or update a single process for the authenticated user.
+    Expected payload example:
+    {
+        "numero": "11001418902420250012300",
+        "id_proceso": "216210310",
+        "fecha_ultima_actuacion": "2024-05-10",
+        "despacho": "JUZGADO ...",
+        "departamento": "CUNDINAMARCA",
+        "demandante": "BANCO X",
+        "demandado": "EMPRESA Y",
+        "response_json": { ... },
+        "detalle_json": { ... },
+        "tipo_proceso": "...",
+        "clase_proceso": "...",
+        "subclase_proceso": "...",
+        "recurso": "...",
+        "ponente": "...",
+        "ubicacion": "Despacho"
+    }
+    """
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    numero = payload.get("numero")
+    if not numero:
+        raise HTTPException(status_code=400, detail="Missing 'numero' in payload")
+
+    # Normalize and extract fields
+    id_proceso = str(payload.get("id_proceso", "")) if payload.get("id_proceso") is not None else None
+    response_json = json.dumps(payload.get("response_json")) if isinstance(payload.get("response_json"), (dict, list)) else (payload.get("response_json") or None)
+    detalle_json = json.dumps(payload.get("detalle_json")) if isinstance(payload.get("detalle_json"), (dict, list)) else (payload.get("detalle_json") or None)
+    fecha_str = payload.get("fecha_ultima_actuacion")
+    fecha_ultima_actuacion = None
+    if fecha_str:
+        try:
+            fecha_ultima_actuacion = datetime.datetime.fromisoformat(fecha_str).date()
+        except:
+            try:
+                fecha_ultima_actuacion = datetime.datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            except:
+                fecha_ultima_actuacion = None
+
+    despacho = payload.get("despacho")
+    departamento = payload.get("departamento")
+    demandante = payload.get("demandante")
+    demandado = payload.get("demandado")
+    tipo_proceso = payload.get("tipo_proceso")
+    clase_proceso = payload.get("clase_proceso")
+    subclase_proceso = payload.get("subclase_proceso")
+    recurso = payload.get("recurso")
+    ponente = payload.get("ponente")
+    ubicacion = payload.get("ubicacion")
+
+    try:
+        # Check existing for this user + numero
+        existing = db.query(UserProcess).filter_by(user_id=current_user.id, numero=numero).first()
+        if existing:
+            # Update fields
+            existing.id_proceso = id_proceso or existing.id_proceso
+            if response_json is not None:
+                existing.response_json = response_json
+            if detalle_json is not None:
+                existing.detalle_json = detalle_json
+            if fecha_ultima_actuacion:
+                existing.fecha_ultima_actuacion = fecha_ultima_actuacion
+            if despacho is not None:
+                existing.despacho = despacho
+            if departamento is not None:
+                existing.departamento = departamento
+            if demandante is not None:
+                existing.demandante = demandante
+            if demandado is not None:
+                existing.demandado = demandado
+            if tipo_proceso is not None:
+                existing.tipo_proceso = tipo_proceso
+            if clase_proceso is not None:
+                existing.clase_proceso = clase_proceso
+            if subclase_proceso is not None:
+                existing.subclase_proceso = subclase_proceso
+            if recurso is not None:
+                existing.recurso = recurso
+            if ponente is not None:
+                existing.ponente = ponente
+            if ubicacion is not None:
+                existing.ubicacion = ubicacion
+
+            existing.updated_at = datetime.datetime.utcnow()
+            db.commit()
+            db.refresh(existing)
+            return {"status": "success", "action": "updated", "process": {
+                "id": existing.id,
+                "numero": existing.numero
+            }}
+        else:
+            # Create new record
+            new_proc = UserProcess(
+                user_id=current_user.id,
+                numero=numero,
+                id_proceso=id_proceso,
+                response_json=response_json,
+                detalle_json=detalle_json,
+                fecha_ultima_actuacion=fecha_ultima_actuacion,
+                despacho=despacho,
+                departamento=departamento,
+                demandante=demandante,
+                demandado=demandado,
+                tipo_proceso=tipo_proceso,
+                clase_proceso=clase_proceso,
+                subclase_proceso=subclase_proceso,
+                recurso=recurso,
+                ponente=ponente,
+                ubicacion=ubicacion
+            )
+            db.add(new_proc)
+            db.commit()
+            db.refresh(new_proc)
+            return {"status": "success", "action": "created", "process": {
+                "id": new_proc.id,
+                "numero": new_proc.numero
+            }}
+    except Exception as e:
+        print(f"DEBUG: Failed to save process {numero} for user {current_user.id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save process")
 
 # Get user's saved processes
 @app.get("/processes/my-processes")
