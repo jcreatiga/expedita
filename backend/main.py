@@ -543,10 +543,23 @@ async def batch_query_processes(
     if not numbers:
         raise HTTPException(status_code=400, detail="No valid numbers provided")
 
-    # Process all queries concurrently
-    print(f"DEBUG: Processing {len(numbers)} queries concurrently")
-    tasks = [process_single_judicial_query(num) for num in numbers]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Process queries with delay between each to avoid overwhelming the API
+    print(f"DEBUG: Processing {len(numbers)} queries with delays to avoid API blocking")
+    results = []
+
+    for i, numero in enumerate(numbers):
+        if i > 0:  # Add delay between queries (except for the first one)
+            delay = 2.0  # 2 seconds delay between queries
+            print(f"DEBUG: Waiting {delay} seconds before next query...")
+            await asyncio.sleep(delay)
+
+        print(f"DEBUG: Processing query {i+1}/{len(numbers)}: {numero}")
+        try:
+            result = await process_single_judicial_query(numero)
+            results.append(result)
+        except Exception as e:
+            print(f"DEBUG: Exception processing {numero}: {e}")
+            results.append({"error": f"Processing exception: {str(e)}", "numero": numero, "success": False})
 
     # Process results and save to database
     processed_results = []

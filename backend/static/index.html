@@ -251,7 +251,7 @@
                 }
             }
 
-            showQueryResult('Consultando procesos... Esto puede tomar unos segundos.', 'success');
+            showQueryResult('Consultando procesos... Procesando secuencialmente para evitar bloqueos de API. Esto puede tomar tiempo.', 'success');
 
             try {
                 const response = await fetch('/processes/batch-query', {
