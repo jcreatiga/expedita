@@ -613,17 +613,39 @@ async def batch_query_processes(
     db = Depends(get_db),
     http_request: Request = None
 ):
+    print(f"DEBUG: Batch query endpoint called by user {current_user.email} (ID: {current_user.id})")
+
     if not db:
+        print(f"DEBUG: Database not available")
         raise HTTPException(status_code=500, detail="Database not available")
 
     # Parse numbers
     numbers = [n.strip() for n in request.numbers.split(',') if n.strip()]
+    print(f"DEBUG: Raw input: '{request.numbers}'")
+    print(f"DEBUG: Parsed numbers: {numbers}")
 
     if len(numbers) > 10:
+        print(f"DEBUG: Too many numbers: {len(numbers)}")
         raise HTTPException(status_code=400, detail="Maximum 10 processes per batch")
 
     if not numbers:
+        print(f"DEBUG: No numbers provided")
         raise HTTPException(status_code=400, detail="No valid numbers provided")
+
+    # Validate all numbers
+    valid_numbers = []
+    for num in numbers:
+        if len(num) != 23 or not num.isdigit():
+            print(f"DEBUG: Invalid number format: '{num}' (length: {len(num)})")
+            continue
+        valid_numbers.append(num)
+
+    if not valid_numbers:
+        print(f"DEBUG: No valid numbers after validation")
+        raise HTTPException(status_code=400, detail="No valid 23-digit numbers provided")
+
+    numbers = valid_numbers
+    print(f"DEBUG: Valid numbers to process: {numbers}")
 
     # Get client info for logging
     client_ip = http_request.client.host if http_request and http_request.client else "unknown"
@@ -734,6 +756,7 @@ async def batch_query_processes(
             print(f"Database error for {result['numero']}: {db_error}")
             # Continue processing even if DB save fails
 
+    print(f"DEBUG: Batch query completed. Returning {len(processed_results)} results and {len(errors)} errors")
     return {"results": processed_results, "total_processed": len(processed_results), "errors": errors}
 
 # Get user's saved processes
