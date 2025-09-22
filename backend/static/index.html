@@ -73,7 +73,7 @@
                 return;
             }
             try {
-                const response = await fetch(`http://127.0.0.1:8001/query/${numero}`);
+                const response = await fetch(`/query/${numero}`);
                 const data = await response.json();
                 if (response.ok) {
                     displayProcessData(data.data);
@@ -92,7 +92,7 @@
                 return;
             }
             try {
-                const response = await fetch(`http://127.0.0.1:8001/set_numero/${numero}`, { method: 'POST' });
+                const response = await fetch(`/set_numero/${numero}`, { method: 'POST' });
                 const data = await response.json();
                 if (response.ok) {
                     document.getElementById('result').innerHTML = '<p class="success">Número configurado para consultas diarias.</p>';
