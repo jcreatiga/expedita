@@ -85,15 +85,42 @@ def query_and_store(numero: str):
     if len(numero) != 23 or not numero.isdigit():
         return  # or log error
     url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
+
+    # Try direct HTTP request first
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        # Store data
+        session = Session()
+        result = QueryResult(numero=numero, response_json=json.dumps(data))
+        session.add(result)
+        session.commit()
+        session.close()
+        return
+    except Exception as e:
+        pass  # Continue to Selenium fallback
+
+    # Fallback to Selenium if direct request fails
     try:
         from selenium.webdriver import Firefox
         options = Options()
         options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
         driver = Firefox(options=options)
         driver.get(url)
         body_text = driver.find_element(By.TAG_NAME, 'body').text
         data = json.loads(body_text)
         driver.quit()
+
         # Store data
         session = Session()
         result = QueryResult(numero=numero, response_json=json.dumps(data))
@@ -131,15 +158,19 @@ def query_api(numero: str):
         raise HTTPException(status_code=400, detail="Invalid 23-digit number")
 
     url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
+
+    # Try direct HTTP request first (simpler and faster)
     try:
-        from selenium.webdriver import Firefox
-        options = Options()
-        options.add_argument('--headless')
-        driver = Firefox(options=options)
-        driver.get(url)
-        body_text = driver.find_element(By.TAG_NAME, 'body').text
-        data = json.loads(body_text)
-        driver.quit()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
         # Store data
         session = Session()
         result = QueryResult(numero=numero, response_json=json.dumps(data))
@@ -148,7 +179,28 @@ def query_api(numero: str):
         session.close()
         return {"status": "success", "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"API request failed: {str(e)}")
+        # Fallback to Selenium if direct request fails
+        try:
+            from selenium.webdriver import Firefox
+            options = Options()
+            options.add_argument('--headless')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            driver = Firefox(options=options)
+            driver.get(url)
+            body_text = driver.find_element(By.TAG_NAME, 'body').text
+            data = json.loads(body_text)
+            driver.quit()
+
+            # Store data
+            session = Session()
+            result = QueryResult(numero=numero, response_json=json.dumps(data))
+            session.add(result)
+            session.commit()
+            session.close()
+            return {"status": "success", "data": data}
+        except Exception as selenium_error:
+            raise HTTPException(status_code=500, detail=f"API request failed: {str(e)}, Selenium fallback also failed: {str(selenium_error)}")
 
 @app.post("/set_numero/{numero}")
 def set_numero(numero: str):
