@@ -232,6 +232,44 @@ def db_test():
     except Exception as e:
         return {"status": "error", "message": f"Database error: {str(e)}"}
 
+@app.get("/api-test")
+def api_test():
+    """Test endpoint to check connectivity with Colombian Judicial API"""
+    test_url = "https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero=11001418902420250012300&SoloActivos=false&pagina=1"
+
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'es-CO,es;q=0.9,en-US;q=0.8,en;q=0.7',
+        }
+
+        print(f"DEBUG: Testing API connectivity to: {test_url}")
+        response = requests.get(test_url, headers=headers, timeout=30, verify=False)
+        print(f"DEBUG: API test response status: {response.status_code}")
+
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "status": "success",
+                "message": "API connection successful",
+                "response_status": response.status_code,
+                "has_data": 'procesos' in data and len(data.get('procesos', [])) > 0
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"API returned status {response.status_code}",
+                "response_status": response.status_code
+            }
+
+    except requests.exceptions.Timeout:
+        return {"status": "error", "message": "API request timed out"}
+    except requests.exceptions.ConnectionError:
+        return {"status": "error", "message": "Connection error - API may be blocking requests"}
+    except Exception as e:
+        return {"status": "error", "message": f"API test failed: {str(e)}"}
+
 @app.get("/query/{numero}")
 def query_api(numero: str):
     if len(numero) != 23 or not numero.isdigit():
@@ -389,23 +427,34 @@ def query_api(numero: str):
 async def process_single_judicial_query(numero: str) -> dict:
     """Process a single judicial process query and return structured data"""
     if len(numero) != 23 or not numero.isdigit():
+        print(f"DEBUG: Invalid number format: {numero}")
         return {"error": f"Invalid 23-digit number: {numero}", "numero": numero}
 
     url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
+    print(f"DEBUG: Querying URL: {url}")
 
     try:
-        # Try direct HTTP request first
+        # Try direct HTTP request first with enhanced headers
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8',
+            'Accept-Language': 'es-CO,es;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
-            'Referer': 'https://consultaprocesos.ramajudicial.gov.co:448/'
+            'Referer': 'https://consultaprocesos.ramajudicial.gov.co:448/',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
         }
 
-        response = requests.get(url, headers=headers, timeout=30, verify=False)
+        print(f"DEBUG: Making HTTP request to judicial API for {numero}")
+        response = requests.get(url, headers=headers, timeout=60, verify=False)
+        print(f"DEBUG: Response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
+        print(f"DEBUG: Successfully received data for {numero}")
 
         # Extract process data
         if 'procesos' in data and len(data['procesos']) > 0:
@@ -444,8 +493,21 @@ async def process_single_judicial_query(numero: str) -> dict:
         else:
             return {"error": "No processes found", "numero": numero, "success": False}
 
+    except requests.exceptions.Timeout as e:
+        print(f"DEBUG: Timeout error for {numero}: {str(e)}")
+        return {"error": f"Timeout connecting to judicial API: {str(e)}", "numero": numero, "success": False}
+
+    except requests.exceptions.ConnectionError as e:
+        print(f"DEBUG: Connection error for {numero}: {str(e)}")
+        return {"error": f"Connection error to judicial API: {str(e)}", "numero": numero, "success": False}
+
+    except requests.exceptions.HTTPError as e:
+        print(f"DEBUG: HTTP error for {numero}: {str(e)}")
+        return {"error": f"HTTP error from judicial API: {str(e)}", "numero": numero, "success": False}
+
     except Exception as e:
-        # Fallback to mock data
+        print(f"DEBUG: General error for {numero}: {str(e)}")
+        # Fallback to mock data for testing
         mock_data = {
             "numero": numero,
             "id_proceso": f"mock_{numero[-5:]}",
@@ -456,7 +518,8 @@ async def process_single_judicial_query(numero: str) -> dict:
             "demandado": "MARIA GOMEZ",
             "response_json": json.dumps({"procesos": []}),
             "success": True,
-            "mock": True
+            "mock": True,
+            "error": str(e)
         }
         return mock_data
 
@@ -481,15 +544,21 @@ async def batch_query_processes(
         raise HTTPException(status_code=400, detail="No valid numbers provided")
 
     # Process all queries concurrently
+    print(f"DEBUG: Processing {len(numbers)} queries concurrently")
     tasks = [process_single_judicial_query(num) for num in numbers]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Process results and save to database
     processed_results = []
+    errors = []
     today = datetime.date.today()
+
+    print(f"DEBUG: Processing {len(results)} results")
 
     for result in results:
         if isinstance(result, Exception):
+            print(f"DEBUG: Exception in result: {result}")
+            errors.append({"error": "Processing exception", "details": str(result)})
             continue
 
         if result.get('success'):
@@ -509,47 +578,58 @@ async def batch_query_processes(
                 "is_today": is_today
             }
             processed_results.append(processed_result)
+            print(f"DEBUG: Successfully processed {result['numero']}")
+        else:
+            error_info = {
+                "numero": result.get("numero", "unknown"),
+                "error": result.get("error", "Unknown error")
+            }
+            errors.append(error_info)
+            print(f"DEBUG: Failed to process {result.get('numero', 'unknown')}: {result.get('error', 'Unknown error')}")
 
-            # Save to database
-            try:
-                # Check if process already exists for this user
-                existing = db.query(UserProcess).filter_by(
+    print(f"DEBUG: Processed {len(processed_results)} successfully, {len(errors)} errors")
+
+    # Save successful results to database
+    for result in processed_results:
+        try:
+            # Check if process already exists for this user
+            existing = db.query(UserProcess).filter_by(
+                user_id=current_user.id,
+                numero=result["numero"]
+            ).first()
+
+            if existing:
+                # Update existing
+                existing.id_proceso = result["id_proceso"]
+                existing.response_json = result["response_json"]
+                existing.fecha_ultima_actuacion = result["fecha_ultima_actuacion"]
+                existing.despacho = result["despacho"]
+                existing.departamento = result["departamento"]
+                existing.demandante = result["demandante"]
+                existing.demandado = result["demandado"]
+                existing.updated_at = datetime.datetime.utcnow()
+            else:
+                # Create new
+                user_process = UserProcess(
                     user_id=current_user.id,
-                    numero=result["numero"]
-                ).first()
+                    numero=result["numero"],
+                    id_proceso=result["id_proceso"],
+                    response_json=result["response_json"],
+                    fecha_ultima_actuacion=result["fecha_ultima_actuacion"],
+                    despacho=result["despacho"],
+                    departamento=result["departamento"],
+                    demandante=result["demandante"],
+                    demandado=result["demandado"]
+                )
+                db.add(user_process)
 
-                if existing:
-                    # Update existing
-                    existing.id_proceso = result["id_proceso"]
-                    existing.response_json = result["response_json"]
-                    existing.fecha_ultima_actuacion = result["fecha_ultima_actuacion"]
-                    existing.despacho = result["despacho"]
-                    existing.departamento = result["departamento"]
-                    existing.demandante = result["demandante"]
-                    existing.demandado = result["demandado"]
-                    existing.updated_at = datetime.datetime.utcnow()
-                else:
-                    # Create new
-                    user_process = UserProcess(
-                        user_id=current_user.id,
-                        numero=result["numero"],
-                        id_proceso=result["id_proceso"],
-                        response_json=result["response_json"],
-                        fecha_ultima_actuacion=result["fecha_ultima_actuacion"],
-                        despacho=result["despacho"],
-                        departamento=result["departamento"],
-                        demandante=result["demandante"],
-                        demandado=result["demandado"]
-                    )
-                    db.add(user_process)
+            db.commit()
 
-                db.commit()
+        except Exception as db_error:
+            print(f"Database error for {result['numero']}: {db_error}")
+            # Continue processing even if DB save fails
 
-            except Exception as db_error:
-                print(f"Database error: {db_error}")
-                # Continue processing even if DB save fails
-
-    return {"results": processed_results, "total_processed": len(processed_results)}
+    return {"results": processed_results, "total_processed": len(processed_results), "errors": errors}
 
 # Get user's saved processes
 @app.get("/processes/my-processes")
