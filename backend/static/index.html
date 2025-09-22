@@ -74,6 +74,7 @@
                 <p>Ingresa hasta 10 números de radicación separados por comas:</p>
                 <textarea id="batch-numbers" placeholder="11001418902420250012300, 11001418902420250012301, ..."></textarea>
                 <button onclick="batchQuery()">Consultar Procesos</button>
+                <button onclick="testAPIConnection()" style="background-color: #17a2b8;">Probar Conexión API</button>
                 <div id="query-result"></div>
             </div>
 
@@ -250,7 +251,7 @@
                 }
             }
 
-            showQueryResult('Consultando procesos...', 'success');
+            showQueryResult('Consultando procesos... Esto puede tomar unos segundos.', 'success');
 
             try {
                 const response = await fetch('/processes/batch-query', {
@@ -265,12 +266,47 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    displayBatchResults(data.results);
+                    if (data.results && data.results.length > 0) {
+                        displayBatchResults(data.results);
+                        if (data.errors && data.errors.length > 0) {
+                            showQueryResult(`Procesados: ${data.total_processed}. Algunos errores: ${data.errors.map(e => e.error).join(', ')}`, 'success');
+                        }
+                    } else {
+                        showQueryResult('No se pudieron procesar los procesos. Posible problema de conectividad con la API judicial.', 'error');
+                    }
                 } else {
-                    showQueryResult(data.detail || 'Error en la consulta', 'error');
+                    if (response.status === 429) {
+                        showQueryResult('Demasiadas consultas. Espera unos minutos antes de intentar nuevamente.', 'error');
+                    } else {
+                        showQueryResult(data.detail || 'Error en la consulta', 'error');
+                    }
                 }
             } catch (error) {
-                showQueryResult('Error de conexión', 'error');
+                console.error('Connection error:', error);
+                showQueryResult('Error de conexión. Verifica tu conexión a internet o intenta más tarde.', 'error');
+            }
+        }
+
+        // Test API connection
+        async function testAPIConnection() {
+            showQueryResult('Probando conexión con la API judicial...', 'success');
+
+            try {
+                const response = await fetch('/api-test');
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (data.status === 'success') {
+                        showQueryResult(`✅ Conexión exitosa! API responde correctamente. ${data.has_data ? 'Datos disponibles.' : 'Sin datos de prueba.'}`, 'success');
+                    } else {
+                        showQueryResult(`❌ Error de API: ${data.message}`, 'error');
+                    }
+                } else {
+                    showQueryResult(`❌ Error HTTP ${response.status}: ${data.message || 'Error desconocido'}`, 'error');
+                }
+            } catch (error) {
+                console.error('API test error:', error);
+                showQueryResult('❌ Error de conexión. Verifica tu conexión a internet.', 'error');
             }
         }
 
