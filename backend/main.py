@@ -8,9 +8,8 @@ import datetime
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from selenium import webdriver
-from selenium.webdriver import Edge
-from selenium.webdriver.edge.options import Options
-from selenium.webdriver.edge.service import Service
+from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.common.by import By
 
 Base = declarative_base()
@@ -87,10 +86,10 @@ def query_and_store(numero: str):
         return  # or log error
     url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
     try:
-        service = Service('msedgedriver.exe')
+        from selenium.webdriver import Firefox
         options = Options()
         options.add_argument('--headless')
-        driver = Edge(service=service, options=options)
+        driver = Firefox(options=options)
         driver.get(url)
         body_text = driver.find_element(By.TAG_NAME, 'body').text
         data = json.loads(body_text)
@@ -130,13 +129,13 @@ def read_root():
 def query_api(numero: str):
     if len(numero) != 23 or not numero.isdigit():
         raise HTTPException(status_code=400, detail="Invalid 23-digit number")
-    
+
     url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
     try:
-        service = Service('msedgedriver.exe')
+        from selenium.webdriver import Firefox
         options = Options()
         options.add_argument('--headless')
-        driver = Edge(service=service, options=options)
+        driver = Firefox(options=options)
         driver.get(url)
         body_text = driver.find_element(By.TAG_NAME, 'body').text
         data = json.loads(body_text)
