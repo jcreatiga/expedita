@@ -621,7 +621,7 @@ async def batch_query_processes(
 
     # Parse numbers
     numbers = [n.strip() for n in batch_request.numbers.split(',') if n.strip()]
-    print(f"DEBUG: Raw input: '{request.numbers}'")
+    print(f"DEBUG: Raw input: '{batch_request.numbers}'")
     print(f"DEBUG: Parsed numbers: {numbers}")
 
     if len(numbers) > 10:
