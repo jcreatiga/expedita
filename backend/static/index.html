@@ -25,6 +25,7 @@
         <input type="text" id="numero" placeholder="Ingresa el número de 23 dígitos" maxlength="23">
         <button onclick="queryAPI()">Consultar Ahora</button>
         <button onclick="setNumero()">Configurar para Consultas Diarias</button>
+        <button onclick="getDetalle()" id="detalleBtn" style="display:none;">Ver Detalles del Proceso</button>
         <div id="result"></div>
     </div>
 
@@ -32,9 +33,14 @@
         function displayProcessData(data) {
             if (!data.procesos || data.procesos.length === 0) {
                 document.getElementById('result').innerHTML = '<p>No se encontraron procesos.</p>';
+                document.getElementById('detalleBtn').style.display = 'none';
+                currentIdProceso = null;
                 return;
             }
             const proceso = data.procesos[0]; // Asumiendo que hay uno
+
+            // Store the process ID for detailed queries
+            currentIdProceso = proceso.idProceso;
 
             // Parsear sujetos procesales
             const sujetos = proceso.sujetosProcesales.split(' | ');
@@ -49,7 +55,7 @@
             });
 
             const html = `
-                <h2>Detalles del Proceso Judicial</h2>
+                <h2>Información Básica del Proceso Judicial</h2>
                 <table>
                     <tr><th>Campo</th><th>Valor</th></tr>
                     <tr><td>Número de Radicación</td><td>${proceso.llaveProceso}</td></tr>
@@ -63,6 +69,29 @@
                     <tr><td>ID Proceso</td><td>${proceso.idProceso}</td></tr>
                 </table>
             `;
+            document.getElementById('result').innerHTML = html;
+
+            // Show the detail button
+            document.getElementById('detalleBtn').style.display = 'inline-block';
+        }
+
+        function displayDetailedData(data, cached = false) {
+            let html = `<h2>Detalles Completos del Proceso Judicial ${cached ? '(Cacheado)' : '(Actual)'}</h2>`;
+
+            if (data && typeof data === 'object') {
+                html += '<table><tr><th>Campo</th><th>Valor</th></tr>';
+
+                // Display all key-value pairs from the detailed data
+                Object.entries(data).forEach(([key, value]) => {
+                    const displayValue = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+                    html += `<tr><td>${key}</td><td>${displayValue}</td></tr>`;
+                });
+
+                html += '</table>';
+            } else {
+                html += '<p>No se pudieron obtener los detalles del proceso.</p>';
+            }
+
             document.getElementById('result').innerHTML = html;
         }
 
@@ -85,6 +114,8 @@
             }
         }
 
+        let currentIdProceso = null;
+
         async function setNumero() {
             const numero = document.getElementById('numero').value;
             if (numero.length !== 23 || isNaN(numero)) {
@@ -96,6 +127,25 @@
                 const data = await response.json();
                 if (response.ok) {
                     document.getElementById('result').innerHTML = '<p class="success">Número configurado para consultas diarias.</p>';
+                } else {
+                    document.getElementById('result').innerHTML = `<p class="error">${data.detail}</p>`;
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+            }
+        }
+
+        async function getDetalle() {
+            if (!currentIdProceso) {
+                document.getElementById('result').innerHTML = '<p class="error">No hay ID de proceso disponible.</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/detalle/${currentIdProceso}`);
+                const data = await response.json();
+                if (response.ok) {
+                    displayDetailedData(data.data, data.cached);
                 } else {
                     document.getElementById('result').innerHTML = `<p class="error">${data.detail}</p>`;
                 }
