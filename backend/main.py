@@ -152,55 +152,42 @@ def read_root():
         html_content = f.read()
     return HTMLResponse(content=html_content)
 
+@app.get("/test")
+def test_endpoint():
+    return {"status": "success", "message": "API is working!"}
+
 @app.get("/query/{numero}")
 def query_api(numero: str):
     if len(numero) != 23 or not numero.isdigit():
         raise HTTPException(status_code=400, detail="Invalid 23-digit number")
 
-    url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
+    # For now, return mock data to test the API structure
+    mock_data = {
+        "procesos": [
+            {
+                "llaveProceso": numero,
+                "fechaProceso": "2023-01-15T00:00:00.000Z",
+                "fechaUltimaActuacion": "2024-01-15T00:00:00.000Z",
+                "despacho": "JUZGADO CIVIL MUNICIPAL DE BOGOTÁ",
+                "departamento": "CUNDINAMARCA",
+                "sujetosProcesales": "Demandante: JUAN PEREZ | Demandado: MARIA GOMEZ",
+                "esPrivado": False,
+                "idProceso": 123456789
+            }
+        ]
+    }
 
-    # Try direct HTTP request first (simpler and faster)
+    # Store mock data
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8',
-            'Connection': 'keep-alive'
-        }
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-
-        # Store data
         session = Session()
-        result = QueryResult(numero=numero, response_json=json.dumps(data))
+        result = QueryResult(numero=numero, response_json=json.dumps(mock_data))
         session.add(result)
         session.commit()
         session.close()
-        return {"status": "success", "data": data}
-    except Exception as e:
-        # Fallback to Selenium if direct request fails
-        try:
-            from selenium.webdriver import Firefox
-            options = Options()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            driver = Firefox(options=options)
-            driver.get(url)
-            body_text = driver.find_element(By.TAG_NAME, 'body').text
-            data = json.loads(body_text)
-            driver.quit()
+    except Exception as db_error:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(db_error)}")
 
-            # Store data
-            session = Session()
-            result = QueryResult(numero=numero, response_json=json.dumps(data))
-            session.add(result)
-            session.commit()
-            session.close()
-            return {"status": "success", "data": data}
-        except Exception as selenium_error:
-            raise HTTPException(status_code=500, detail=f"API request failed: {str(e)}, Selenium fallback also failed: {str(selenium_error)}")
+    return {"status": "success", "data": mock_data}
 
 @app.post("/set_numero/{numero}")
 def set_numero(numero: str):
