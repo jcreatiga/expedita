@@ -14,7 +14,43 @@ from selenium.webdriver.edge.service import Service
 from selenium.webdriver.common.by import By
 
 Base = declarative_base()
-engine = create_engine('sqlite:///results.db')
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Decide database URL from environment (Railway provides DATABASE_URL for Postgres)
+DB_URL = os.getenv('DATABASE_URL')
+
+def make_engine_from_url(db_url: str):
+    """Create SQLAlchemy engine with sensible defaults depending on DB type."""
+    if db_url.startswith('postgresql'):
+        # production (Railway) - use a small pool
+        return create_engine(db_url, echo=True, pool_size=5, max_overflow=10)
+    else:
+        # sqlite or other - default creation
+        return create_engine(db_url, echo=True)
+
+# If DATABASE_URL is set (in Railway), use it; otherwise use local SQLite file
+if DB_URL:
+    try:
+        engine = make_engine_from_url(DB_URL)
+        logger.info(f"Using DATABASE_URL from environment: {DB_URL}")
+    except Exception as e:
+        logger.error(f"Failed to create engine from DATABASE_URL: {e}. Falling back to in-memory SQLite.")
+        engine = create_engine('sqlite:///:memory:', echo=True)
+else:
+    # Local/development: use a file-based SQLite database in ./data/results.db
+    db_file = os.path.join('data', 'results.db')
+    os.makedirs(os.path.dirname(os.path.abspath(db_file)), exist_ok=True)
+    try:
+        engine = create_engine(f"sqlite:///{db_file}", echo=True)
+        logger.info(f"Using local SQLite DB at {db_file}")
+    except Exception as e:
+        logger.error(f"Failed to create local SQLite engine: {e}. Falling back to in-memory SQLite.")
+        engine = create_engine('sqlite:///:memory:', echo=True)
+
 Session = sessionmaker(bind=engine)
 
 class QueryResult(Base):
