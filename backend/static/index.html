@@ -1,526 +1,454 @@
 <!DOCTYPE html>
-<html lang="es">
+<html class="dark" lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Sistema de Consulta Judicial</title>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles.css">
-    <link rel="stylesheet" href="styles.css">
-    <!-- Minimal fallback to ensure dark background if CSS fails to load -->
-    <style>body{background:#0f1720;color:#e6eef8}</style>
+
+    <!-- Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+
+    <!-- Tailwind (CDN build for quick styling + forms/typography plugins) -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#10A37F",
+                        "background-light": "#F9FAFB",
+                        "background-dark": "#202123",
+                        "panel-light": "#FFFFFF",
+                        "panel-dark": "#2C2D31",
+                        "text-light": "#111827",
+                        "text-dark": "#FFFFFF",
+                        "secondary-text-light": "#6B7280",
+                        "secondary-text-dark": "#A1A1A1",
+                    },
+                    fontFamily: {
+                        sans: ["Inter", "sans-serif"],
+                    },
+                    borderRadius: {
+                        DEFAULT: '0.5rem',
+                    },
+                },
+            },
+        };
+    </script>
+
+    <!-- Local (fallback) styles to ensure base dark bg while other CSS loads -->
+    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <style>
+        body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    </style>
 </head>
-<body>
-    <div class="container">
-        <!-- Authentication Section -->
-        <div id="auth-section" class="auth-section show">
-            <h1>Sistema de Consulta Judicial</h1>
-            <div id="auth-forms">
-                <div id="login-form">
-                    <h2>Iniciar Sesión</h2>
-                    <input type="email" id="login-email" placeholder="Correo electrónico" required>
-                    <input type="password" id="login-password" placeholder="Contraseña" required>
-                    <button onclick="login()">Iniciar Sesión</button>
-                    <p><a href="#" onclick="showRegister()">¿No tienes cuenta? Regístrate</a></p>
+<body class="bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark font-sans transition-colors duration-300">
+
+<!-- LOGIN SCREEN (visible by default) -->
+<div class="min-h-screen flex flex-col items-center justify-center p-4" id="login-screen">
+    <div class="w-full max-w-md">
+        <h1 class="text-3xl font-bold text-center mb-2 text-text-light dark:text-text-dark">Sistema de Consulta Judicial</h1>
+        <p class="text-center text-secondary-text-light dark:text-secondary-text-dark mb-8">Bienvenido de nuevo</p>
+
+        <div class="bg-panel-light dark:bg-panel-dark p-8 rounded-lg shadow-md">
+            <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Iniciar Sesión</h2>
+
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark mb-2" for="login-email">Email</label>
+                    <input id="login-email" name="email" type="email" class="w-full px-4 py-2 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md focus:ring-primary focus:border-primary transition duration-200" required />
                 </div>
-                <div id="register-form" style="display: none;">
-                    <h2>Registro</h2>
-                    <input type="email" id="register-email" placeholder="Correo electrónico" required>
-                    <input type="password" id="register-password" placeholder="Contraseña" required>
-                    <button onclick="register()">Registrarse</button>
-                    <p><a href="#" onclick="showLogin()">¿Ya tienes cuenta? Inicia sesión</a></p>
+
+                <div>
+                    <label class="block text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark mb-2" for="login-password">Contraseña</label>
+                    <input id="login-password" name="password" type="password" class="w-full px-4 py-2 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md focus:ring-primary focus:border-primary transition duration-200" required />
                 </div>
-            </div>
-            <div id="auth-result"></div>
-        </div>
 
-        <!-- Main Application Section -->
-        <div id="app-section" class="app-section">
-            <div class="user-info">
-                <span id="user-email"></span>
-                <button onclick="logout()" class="secondary">Cerrar Sesión</button>
-            </div>
+                <button type="submit" class="w-full bg-primary text-white font-semibold py-2 px-4 rounded-md hover:bg-opacity-90 transition-all duration-200 transform hover:scale-105 shadow-sm hover:shadow-lg">
+                    Iniciar Sesión
+                </button>
+            </form>
 
-            <div class="tabs">
-                <button class="tab-button active" onclick="showTab('query')">Consultar Procesos</button>
-                <button class="tab-button" onclick="showTab('saved')">Mis Procesos Guardados</button>
-                <button class="tab-button" onclick="showTab('logs')">Ver Logs de Debug</button>
-            </div>
-
-            <!-- Query Tab -->
-            <div id="query-tab">
-                <h2>Consulta de Procesos Judiciales</h2>
-                <p>Ingresa hasta 10 números de radicación separados por comas:</p>
-                <textarea id="batch-numbers" placeholder="11001418902420250012300, 11001418902420250012301, ..."></textarea>
-                <button onclick="batchQuery()">Consultar Procesos</button>
-                <button onclick="testAPIConnection()" style="background-color: #17a2b8;">Probar Conexión API</button>
-                <div id="query-result"></div>
-            </div>
-
-            <!-- Saved Processes Tab -->
-            <div id="saved-tab" style="display: none;">
-                <h2>Mis Procesos Guardados</h2>
-                <button onclick="loadSavedProcesses()">Actualizar Lista</button>
-                <div id="saved-result"></div>
-            </div>
-
-            <!-- Logs Tab -->
-            <div id="logs-tab" style="display: none;">
-                <h2>Logs de Debug</h2>
-                <p>Historial de consultas y errores para diagnóstico:</p>
-                <button onclick="loadLogs()">Cargar Logs</button>
-                <select id="log-filter" onchange="loadLogs()">
-                    <option value="">Todos los tipos</option>
-                    <option value="batch_query">Consultas por lote</option>
-                    <option value="single_query">Consultas individuales</option>
-                    <option value="api_test">Pruebas de API</option>
-                </select>
-                <div id="logs-result"></div>
-            </div>
+            <p class="text-center text-sm text-secondary-text-light dark:text-secondary-text-dark mt-6">
+                ¿No tienes cuenta? <a class="text-primary hover:underline" href="#" onclick="showRegister()">Regístrate</a>
+            </p>
         </div>
     </div>
+</div>
 
-    <script>
-        let authToken = localStorage.getItem('authToken');
-        let currentUser = null;
+<!-- APP SCREEN (hidden until login) -->
+<div class="hidden min-h-screen" id="app-screen">
+    <div class="flex">
+        <!-- Sidebar -->
+        <aside class="w-20 lg:w-64 bg-panel-light dark:bg-panel-dark p-4 flex flex-col transition-all duration-300 min-h-screen">
+            <div class="flex items-center justify-center lg:justify-start mb-10">
+                <span class="material-icons text-primary text-3xl">gavel</span>
+                <span class="ml-3 text-xl font-bold text-text-light dark:text-text-dark hidden lg:inline">Consulta</span>
+            </div>
 
-        // Initialize app
-        document.addEventListener('DOMContentLoaded', function() {
-            if (authToken) {
-                showApp();
-            } else {
-                showAuth();
-            }
-        });
+            <nav class="flex-grow">
+                <ul>
+                    <li class="mb-2">
+                        <a id="tab-query" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
+                            <span class="material-icons">search</span>
+                            <span class="ml-4 font-medium hidden lg:inline">Consultar Procesos</span>
+                        </a>
+                    </li>
+                    <li class="mb-2">
+                        <a id="tab-saved" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
+                            <span class="material-icons">bookmark_border</span>
+                            <span class="ml-4 font-medium hidden lg:inline">Procesos Guardados</span>
+                        </a>
+                    </li>
+                    <li class="mb-2">
+                        <a id="tab-logs" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
+                            <span class="material-icons">bug_report</span>
+                            <span class="ml-4 font-medium hidden lg:inline">Logs de Debug</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
 
-        // Authentication functions
-        function showAuth() {
-            document.getElementById('auth-section').classList.add('show');
-            document.getElementById('app-section').classList.remove('show');
-        }
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <div class="flex items-center p-2">
+                    <div id="avatar" class="w-10 h-10 bg-primary rounded-full flex items-center justify-center text-white font-bold">
+                        JR
+                    </div>
+                    <div class="ml-3 hidden lg:inline">
+                        <p id="user-email" class="text-sm font-medium text-text-light dark:text-text-dark">user@example.com</p>
+                        <button id="logout-btn" class="text-xs text-secondary-text-light dark:text-secondary-text-dark hover:text-primary mt-1">Cerrar Sesión</button>
+                    </div>
+                </div>
+            </div>
+        </aside>
 
-        function showApp() {
-            document.getElementById('auth-section').classList.remove('show');
-            document.getElementById('app-section').classList.add('show');
+        <!-- Main -->
+        <main class="flex-1 p-6 lg:p-10 bg-background-light dark:bg-background-dark min-h-screen">
+            <header class="mb-8">
+                <h1 class="text-4xl font-bold text-text-light dark:text-text-dark">Consulta de Procesos Judiciales</h1>
+                <p class="text-lg text-secondary-text-light dark:text-secondary-text-dark mt-2">Ingresa los números de radicación para iniciar la consulta.</p>
+            </header>
+
+            <div class="bg-panel-light dark:bg-panel-dark p-8 rounded-lg shadow-md">
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark mb-2" for="process-numbers">Ingresa hasta 10 números de radicación separados por comas:</label>
+                    <textarea id="batch-numbers" class="w-full p-4 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md focus:ring-primary focus:border-primary transition duration-200" placeholder="Ej: 11001418902420250012, ..." rows="4"></textarea>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-4">
+                    <button id="btn-batch-query" class="w-full sm:w-auto bg-primary text-white font-semibold py-3 px-6 rounded-md hover:bg-opacity-90 transition-all duration-200 transform hover:scale-105 shadow-sm hover:shadow-lg flex items-center justify-center">
+                        <span class="material-icons mr-2">search</span>
+                        Consultar Procesos
+                    </button>
+
+                    <button id="btn-api-test" class="w-full sm:w-auto bg-transparent border border-primary text-primary font-semibold py-3 px-6 rounded-md hover:bg-primary hover:text-white transition-colors duration-200 flex items-center justify-center">
+                        <span class="material-icons mr-2">api</span>
+                        Probar Conexión API
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-12">
+                <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Resultados</h2>
+                <div id="query-result" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<!-- Scripts: reuse existing logic but adapt to new IDs and screen toggles -->
+<script>
+    // Keep auth token and current user
+    let authToken = localStorage.getItem('authToken');
+    let currentUser = null;
+
+    const loginScreen = document.getElementById('login-screen');
+    const appScreen = document.getElementById('app-screen');
+    const loginForm = document.getElementById('login-form');
+    const logoutBtn = document.getElementById('logout-btn');
+    const userEmailSpan = document.getElementById('user-email');
+
+    // Buttons
+    const btnBatchQuery = document.getElementById('btn-batch-query');
+    const btnApiTest = document.getElementById('btn-api-test');
+
+    // Tabs
+    document.getElementById('tab-query').addEventListener('click', () => showTab('query'));
+    document.getElementById('tab-saved').addEventListener('click', () => showTab('saved'));
+    document.getElementById('tab-logs').addEventListener('click', () => showTab('logs'));
+
+    // Initialize app
+    document.addEventListener('DOMContentLoaded', function() {
+        if (authToken) {
+            // verify token quickly (non-blocking)
+            showApp();
             loadUserInfo();
-        }
-
-        function showLogin() {
-            document.getElementById('login-form').style.display = 'block';
-            document.getElementById('register-form').style.display = 'none';
-        }
-
-        function showRegister() {
-            document.getElementById('login-form').style.display = 'none';
-            document.getElementById('register-form').style.display = 'block';
-        }
-
-        async function register() {
-            const email = document.getElementById('register-email').value;
-            const password = document.getElementById('register-password').value;
-
-            if (!email || !password) {
-                showAuthResult('Por favor completa todos los campos', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch('/auth/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    authToken = data.access_token;
-                    localStorage.setItem('authToken', authToken);
-                    showAuthResult('Registro exitoso! Iniciando sesión...', 'success');
-                    setTimeout(() => showApp(), 1000);
-                } else {
-                    showAuthResult(data.detail || 'Error en el registro', 'error');
-                }
-            } catch (error) {
-                showAuthResult('Error de conexión', 'error');
-            }
-        }
-
-        async function login() {
-            const email = document.getElementById('login-email').value;
-            const password = document.getElementById('login-password').value;
-
-            if (!email || !password) {
-                showAuthResult('Por favor completa todos los campos', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch('/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    authToken = data.access_token;
-                    localStorage.setItem('authToken', authToken);
-                    showAuthResult('Inicio de sesión exitoso!', 'success');
-                    setTimeout(() => showApp(), 1000);
-                } else {
-                    showAuthResult(data.detail || 'Error en el inicio de sesión', 'error');
-                }
-            } catch (error) {
-                showAuthResult('Error de conexión', 'error');
-            }
-        }
-
-        function logout() {
-            authToken = null;
-            localStorage.removeItem('authToken');
-            currentUser = null;
+        } else {
             showAuth();
         }
+    });
 
-        function showAuthResult(message, type) {
-            const resultDiv = document.getElementById('auth-result');
-            resultDiv.innerHTML = `<p class="${type}">${message}</p>`;
+    // Login form submit
+    loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await login();
+    });
+
+    // Logout
+    logoutBtn.addEventListener('click', () => {
+        logout();
+    });
+
+    // Wire main action buttons
+    btnBatchQuery.addEventListener('click', () => batchQuery());
+    btnApiTest.addEventListener('click', () => testAPIConnection());
+
+    // Show/hide helpers
+    function showAuth() {
+        loginScreen.classList.remove('hidden');
+        appScreen.classList.add('hidden');
+    }
+
+    function showApp() {
+        loginScreen.classList.add('hidden');
+        appScreen.classList.remove('hidden');
+    }
+
+    async function login() {
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+
+        if (!email || !password) {
+            alert('Por favor completa todos los campos');
+            return;
         }
 
-        async function loadUserInfo() {
-            if (!authToken) return;
-
-            try {
-                const response = await fetch('/auth/me', {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                if (response.ok) {
-                    currentUser = await response.json();
-                    document.getElementById('user-email').textContent = `Usuario: ${currentUser.email}`;
-                } else {
-                    logout(); // Token inválido
-                }
-            } catch (error) {
-                console.error('Error loading user info:', error);
-            }
-        }
-
-        // Tab management
-        function showTab(tabName) {
-            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
-
-            document.getElementById('query-tab').style.display = tabName === 'query' ? 'block' : 'none';
-            document.getElementById('saved-tab').style.display = tabName === 'saved' ? 'block' : 'none';
-            document.getElementById('logs-tab').style.display = tabName === 'logs' ? 'block' : 'none';
-
-            if (tabName === 'saved') {
-                loadSavedProcesses();
-            } else if (tabName === 'logs') {
-                loadLogs();
-            }
-        }
-
-        // Batch query function
-        async function batchQuery() {
-            const numbers = document.getElementById('batch-numbers').value.trim();
-
-            if (!numbers) {
-                showQueryResult('Por favor ingresa al menos un número de radicación', 'error');
-                return;
-            }
-
-            const numberList = numbers.split(',').map(n => n.trim()).filter(n => n);
-            if (numberList.length > 10) {
-                showQueryResult('Máximo 10 procesos por consulta', 'error');
-                return;
-            }
-
-            // Validate numbers
-            for (const num of numberList) {
-                if (num.length !== 23 || isNaN(num)) {
-                    showQueryResult(`Número inválido: ${num}. Debe ser 23 dígitos.`, 'error');
-                    return;
-                }
-            }
-
-            showQueryResult('Consultando procesos... Procesando secuencialmente para evitar bloqueos de API. Esto puede tomar tiempo.', 'success');
-
-            try {
-                const response = await fetch('/processes/batch-query', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({ numbers })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    if (data.results && data.results.length > 0) {
-                        displayBatchResults(data.results);
-                        if (data.errors && data.errors.length > 0) {
-                            showQueryResult(`Procesados: ${data.total_processed}. Algunos errores: ${data.errors.map(e => e.error).join(', ')}`, 'success');
-                        }
-                    } else {
-                        showQueryResult('No se pudieron procesar los procesos. Posible problema de conectividad con la API judicial.', 'error');
-                    }
-                } else {
-                    if (response.status === 429) {
-                        showQueryResult('Demasiadas consultas. Espera unos minutos antes de intentar nuevamente.', 'error');
-                    } else {
-                        showQueryResult(data.detail || 'Error en la consulta', 'error');
-                    }
-                }
-            } catch (error) {
-                console.error('Connection error:', error);
-                showQueryResult('Error de conexión. Verifica tu conexión a internet o intenta más tarde.', 'error');
-            }
-        }
-
-        // Test API connection
-        async function testAPIConnection() {
-            showQueryResult('Probando conexión con la API judicial...', 'success');
-
-            try {
-                const response = await fetch('/api-test');
-                const data = await response.json();
-
-                if (response.ok) {
-                    if (data.status === 'success') {
-                        showQueryResult(`✅ Conexión exitosa! API responde correctamente. ${data.has_data ? 'Datos disponibles.' : 'Sin datos de prueba.'}`, 'success');
-                    } else {
-                        showQueryResult(`❌ Error de API: ${data.message}`, 'error');
-                    }
-                } else {
-                    showQueryResult(`❌ Error HTTP ${response.status}: ${data.message || 'Error desconocido'}`, 'error');
-                }
-            } catch (error) {
-                console.error('API test error:', error);
-                showQueryResult('❌ Error de conexión. Verifica tu conexión a internet.', 'error');
-            }
-        }
-
-        function displayBatchResults(results) {
-            if (!results || results.length === 0) {
-                showQueryResult('No se encontraron procesos', 'error');
-                return;
-            }
-
-            let html = `
-                <h3>Resultados de la Consulta (${results.length} procesos)</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Número del Proceso</th>
-                            <th>Última Actuación</th>
-                            <th>Despacho</th>
-                            <th>Departamento</th>
-                            <th>Demandante</th>
-                            <th>Demandado</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-
-            results.forEach(process => {
-                const rowClass = process.is_today ? 'highlight-today' : '';
-                const fechaDisplay = process.fecha_ultima_actuacion
-                    ? new Date(process.fecha_ultima_actuacion).toLocaleDateString('es-CO')
-                    : 'N/A';
-
-                html += `
-                    <tr class="${rowClass}">
-                        <td>${process.numero}</td>
-                        <td>${fechaDisplay}</td>
-                        <td>${process.despacho || 'N/A'}</td>
-                        <td>${process.departamento || 'N/A'}</td>
-                        <td>${process.demandante || 'N/A'}</td>
-                        <td>${process.demandado || 'N/A'}</td>
-                    </tr>
-                `;
+        try {
+            const response = await fetch('/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
             });
 
-            html += `
-                    </tbody>
-                </table>
-                <p class="success">Procesos guardados en tu cuenta. Las filas verdes indican actualización hoy.</p>
-            `;
+            const data = await response.json();
 
-            document.getElementById('query-result').innerHTML = html;
-        }
-
-        function showQueryResult(message, type) {
-            document.getElementById('query-result').innerHTML = `<p class="${type}">${message}</p>`;
-        }
-
-        // Saved processes functions
-        async function loadSavedProcesses() {
-            if (!authToken) return;
-
-            try {
-                const response = await fetch('/processes/my-processes', {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    displaySavedProcesses(data.processes);
-                } else {
-                    document.getElementById('saved-result').innerHTML = `<p class="error">${data.detail}</p>`;
-                }
-            } catch (error) {
-                document.getElementById('saved-result').innerHTML = '<p class="error">Error de conexión</p>';
+            if (response.ok) {
+                authToken = data.access_token;
+                localStorage.setItem('authToken', authToken);
+                showApp();
+                await loadUserInfo();
+            } else {
+                alert(data.detail || 'Error en el inicio de sesión');
             }
+        } catch (error) {
+            alert('Error de conexión');
+        }
+    }
+
+    async function register() {
+        // simple register flow to mirror previous behavior
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+
+        if (!email || !password) {
+            alert('Por favor completa todos los campos');
+            return;
         }
 
-        function displaySavedProcesses(processes) {
-            if (!processes || processes.length === 0) {
-                document.getElementById('saved-result').innerHTML = '<p>No tienes procesos guardados</p>';
-                return;
-            }
-
-            let html = `
-                <h3>Tus Procesos Guardados (${processes.length})</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Número del Proceso</th>
-                            <th>Última Actuación</th>
-                            <th>Despacho</th>
-                            <th>Departamento</th>
-                            <th>Demandante</th>
-                            <th>Demandado</th>
-                            <th>Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-
-            processes.forEach(process => {
-                const rowClass = process.is_today ? 'highlight-today' : '';
-                const fechaDisplay = process.fecha_ultima_actuacion
-                    ? new Date(process.fecha_ultima_actuacion).toLocaleDateString('es-CO')
-                    : 'N/A';
-
-                html += `
-                    <tr class="${rowClass}">
-                        <td>${process.numero}</td>
-                        <td>${fechaDisplay}</td>
-                        <td>${process.despacho || 'N/A'}</td>
-                        <td>${process.departamento || 'N/A'}</td>
-                        <td>${process.demandante || 'N/A'}</td>
-                        <td>${process.demandado || 'N/A'}</td>
-                        <td class="process-actions">
-                            <button onclick="deleteProcess(${process.id})" class="danger">Eliminar</button>
-                        </td>
-                    </tr>
-                `;
+        try {
+            const response = await fetch('/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
             });
-
-            html += `
-                    </tbody>
-                </table>
-            `;
-
-            document.getElementById('saved-result').innerHTML = html;
-        }
-
-        async function deleteProcess(processId) {
-            if (!confirm('¿Estás seguro de que quieres eliminar este proceso?')) return;
-
-            try {
-                const response = await fetch(`/processes/${processId}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                if (response.ok) {
-                    loadSavedProcesses(); // Reload the list
-                } else {
-                    alert('Error al eliminar el proceso');
-                }
-            } catch (error) {
-                alert('Error de conexión');
+            const data = await response.json();
+            if (response.ok) {
+                authToken = data.access_token;
+                localStorage.setItem('authToken', authToken);
+                showApp();
+                await loadUserInfo();
+            } else {
+                alert(data.detail || 'Error en el registro');
             }
+        } catch (err) {
+            alert('Error de conexión');
         }
+    }
 
-        // Logs functions
-        async function loadLogs() {
-            if (!authToken) return;
-
-            const filter = document.getElementById('log-filter').value;
-            const url = filter ? `/logs?action=${filter}` : '/logs';
-
-            try {
-                const response = await fetch(url, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayLogs(data.logs);
-                } else {
-                    document.getElementById('logs-result').innerHTML = `<p class="error">${data.detail}</p>`;
-                }
-            } catch (error) {
-                document.getElementById('logs-result').innerHTML = '<p class="error">Error de conexión</p>';
-            }
+    function showRegister(){
+        // open register: reuse login inputs but call register instead
+        if (confirm('Registrar con los datos ingresados en el formulario?')) {
+            register();
         }
+    }
 
-        function displayLogs(logs) {
-            if (!logs || logs.length === 0) {
-                document.getElementById('logs-result').innerHTML = '<p>No hay logs disponibles</p>';
-                return;
-            }
+    function logout() {
+        authToken = null;
+        localStorage.removeItem('authToken');
+        currentUser = null;
+        userEmailSpan.textContent = '';
+        showAuth();
+    }
 
-            let html = `
-                <h3>Logs de Consultas (${logs.length})</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Fecha/Hora</th>
-                            <th>Acción</th>
-                            <th>Número</th>
-                            <th>Estado</th>
-                            <th>Tiempo (ms)</th>
-                            <th>Mensaje</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-
-            logs.forEach(log => {
-                const fecha = new Date(log.created_at).toLocaleString('es-CO');
-                const statusClass = log.status === 'success' ? 'success' :
-                                   log.status === 'error' ? 'error' : '';
-
-                html += `
-                    <tr>
-                        <td>${fecha}</td>
-                        <td>${log.action}</td>
-                        <td>${log.numero || '-'}</td>
-                        <td class="${statusClass}">${log.status}</td>
-                        <td>${log.response_time_ms || '-'}</td>
-                        <td>${log.message || '-'}</td>
-                    </tr>
-                `;
+    async function loadUserInfo() {
+        if (!authToken) return;
+        try {
+            const response = await fetch('/auth/me', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
             });
-
-            html += `
-                    </tbody>
-                </table>
-            `;
-
-            document.getElementById('logs-result').innerHTML = html;
+            if (response.ok) {
+                currentUser = await response.json();
+                userEmailSpan.textContent = ` ${currentUser.email}`;
+                // set avatar initials
+                const initials = (currentUser.email || 'U').split('@')[0].slice(0,2).toUpperCase();
+                document.getElementById('avatar').textContent = initials;
+            } else {
+                logout();
+            }
+        } catch (error) {
+            console.error('Error loading user info:', error);
         }
-    </script>
+    }
+
+    // Tabs handling
+    function showTab(tabName){
+        // simple client-only switching for demo; could trigger loads
+        document.querySelectorAll('#app-screen nav ul li a').forEach(a => a.classList.remove('bg-background-light','dark:bg-background-dark'));
+        if(tabName === 'query'){
+            // ensure query is visible (we only have one main view so nothing to toggle)
+        } else if(tabName === 'saved'){
+            loadSavedProcesses();
+        } else if(tabName === 'logs'){
+            loadLogs();
+        }
+    }
+
+    // Batch query (uses existing endpoint)
+    async function batchQuery() {
+        const numbers = document.getElementById('batch-numbers').value.trim();
+        if (!numbers) {
+            alert('Por favor ingresa al menos un número de radicación');
+            return;
+        }
+        const numberList = numbers.split(',').map(n => n.trim()).filter(n => n);
+        if (numberList.length > 10) {
+            alert('Máximo 10 procesos por consulta');
+            return;
+        }
+        for (const num of numberList) {
+            if (num.length !== 23 && num.length !== 0) {
+                // allow shorter in demo but warn
+                console.warn(`Formato inesperado para: ${num}`);
+            }
+        }
+
+        try {
+            const response = await fetch('/processes/batch-query', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ numbers })
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                if (data.results && data.results.length > 0) {
+                    displayBatchResults(data.results);
+                } else {
+                    document.getElementById('query-result').innerHTML = '<p class="text-secondary-text-light dark:text-secondary-text-dark">No se encontraron resultados.</p>';
+                }
+            } else {
+                alert(data.detail || 'Error en la consulta');
+            }
+        } catch (error) {
+            console.error(error);
+            alert('Error de conexión. Verifica tu conexión a internet o intenta más tarde.');
+        }
+    }
+
+    function displayBatchResults(results){
+        const container = document.getElementById('query-result');
+        if(!results || results.length === 0){
+            container.innerHTML = '<p class="text-secondary-text-light dark:text-secondary-text-dark">No hay resultados.</p>';
+            return;
+        }
+        let html = '';
+        results.forEach(process => {
+            const status = process.is_active ? 'Activo' : 'Inactivo';
+            const statusColor = process.is_active ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+            html += `
+                <div class="bg-panel-light dark:bg-panel-dark p-6 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+                    <div class="flex justify-between items-start">
+                        <h3 class="text-lg font-bold text-text-light dark:text-text-dark">${process.numero}</h3>
+                        <span class="text-xs font-medium ${statusColor} px-2 py-1 rounded-full">${status}</span>
+                    </div>
+                    <p class="text-sm text-secondary-text-light dark:text-secondary-text-dark mt-2">${process.despacho || 'Información no disponible.'}</p>
+                    <div class="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                        <p class="text-sm"><span class="font-semibold text-secondary-text-light dark:text-secondary-text-dark">Demandante:</span> ${process.demandante || 'N/A'}</p>
+                        <p class="text-sm"><span class="font-semibold text-secondary-text-light dark:text-secondary-text-dark">Demandado:</span> ${process.demandado || 'N/A'}</p>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    }
+
+    async function testAPIConnection(){
+        try{
+            const response = await fetch('/api-test');
+            const data = await response.json();
+            if(response.ok && data.status === 'success'){
+                alert('Conexión API exitosa');
+            } else {
+                alert('Error al conectar con la API');
+            }
+        } catch(err){
+            alert('Error de conexión');
+        }
+    }
+
+    // Saved processes and logs (light implementations)
+    async function loadSavedProcesses(){
+        if(!authToken) return;
+        try{
+            const resp = await fetch('/processes/my-processes', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            const data = await resp.json();
+            if(resp.ok){
+                // reuse display logic
+                displayBatchResults(data.processes || []);
+            } else {
+                alert(data.detail || 'Error cargando procesos guardados');
+            }
+        } catch(err){
+            console.error(err);
+            alert('Error de conexión');
+        }
+    }
+
+    async function loadLogs(){
+        if(!authToken) return;
+        try{
+            const resp = await fetch('/logs', { headers: { 'Authorization': `Bearer ${authToken}` }});
+            const data = await resp.json();
+            if(resp.ok){
+                // show logs in query-result for now
+                const container = document.getElementById('query-result');
+                container.innerHTML = '<pre class="text-sm text-secondary-text-light dark:text-secondary-text-dark">' + JSON.stringify(data.logs || [], null, 2) + '</pre>';
+            } else {
+                alert('Error cargando logs');
+            }
+        } catch(e){
+            console.error(e);
+            alert('Error de conexión');
+        }
+    }
+</script>
+
 </body>
 </html>
