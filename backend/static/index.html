@@ -72,6 +72,18 @@
 
         /* Small helper to visually hide table when empty */
         .table-empty { padding: 28px; color: var(--secondary-text-dark); }
+
+        /* Debug panel for showing backend responses */
+        #debug-panel {
+            margin-top: 18px;
+            padding: 12px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.02);
+            color: #cbd5e1;
+            font-size: 13px;
+            max-height: 220px;
+            overflow: auto;
+        }
     </style>
 </head>
 <body class="bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark font-sans transition-colors duration-300">
@@ -384,8 +396,7 @@
         for (const num of numbers) {
             if (num.length !== 23 || !/^\d+$/.test(num)) {
                 console.warn(`Formato inesperado para: ${num}`);
-                // still include but mark as invalid (backend will reject)
-                validNumbers.push(num);
+                validNumbers.push(num); // include but will likely error server-side
             } else {
                 validNumbers.push(num);
             }
@@ -406,6 +417,13 @@
         progressText.textContent = `0 de ${validNumbers.length} procesos consultados`;
         progressStatus.textContent = 'Iniciando consultas...';
 
+        // Ensure debug panel is visible and cleared
+        const debugPanel = document.getElementById('debug-panel');
+        if (debugPanel) {
+            debugPanel.classList.remove('hidden');
+            debugPanel.innerHTML = '<h3 class="text-sm font-medium mb-2 text-secondary-text-light dark:text-secondary-text-dark">Debug responses (most recent arriba)</h3>';
+        }
+
         lastResults = [];
         // Process sequentially to avoid blocking the judicial API
         for (let i = 0; i < validNumbers.length; i++) {
@@ -420,16 +438,84 @@
                 });
 
                 const data = await resp.json();
-                if (resp.ok && data.status === 'success') {
-                    // push the processed result and re-render table incrementally
-                    lastResults.push(data.result);
-                    renderResultsTable(lastResults);
-                } else {
-                    // Show an inline error row / keep progress but log
-                    console.warn(`Consulta fallida para ${numero}:`, data);
+
+                // Append raw response to debug panel
+                if (debugPanel) {
+                    const entry = document.createElement('div');
+                    entry.style.whiteSpace = 'pre-wrap';
+                    entry.style.fontSize = '12px';
+                    entry.style.padding = '8px';
+                    entry.style.marginBottom = '8px';
+                    entry.style.background = 'rgba(255,255,255,0.02)';
+                    entry.style.borderRadius = '6px';
+                    entry.style.color = '#cbd5e1';
+                    entry.innerText = `[${new Date().toLocaleTimeString()}] ${numero} -> ${JSON.stringify(data, null, 2)}`;
+                    debugPanel.insertBefore(entry, debugPanel.children[1] || null);
                 }
+
+                if (resp.ok && data.status === 'success' && data.result) {
+                    // push the processed result
+                    lastResults.push(data.result);
+                } else {
+                    // If the backend returned an error, create a placeholder row so user sees it
+                    const errDetail = (data && (data.detail || data.raw || data.error)) || 'Error desconocido';
+                    lastResults.push({
+                        numero: numero,
+                        fecha_ultima_actuacion: null,
+                        despacho: 'N/A',
+                        departamento: 'N/A',
+                        demandante: 'N/A',
+                        demandado: 'N/A',
+                        id_proceso: null,
+                        is_today: false,
+                        tipo_proceso: '',
+                        clase_proceso: '',
+                        subclase_proceso: '',
+                        recurso: '',
+                        ponente: '',
+                        ubicacion: '',
+                        error: String(errDetail)
+                    });
+                    console.warn(`Consulta fallida para ${numero}:`, errDetail);
+                }
+
+                // Re-render after each item so the table appears progressively
+                renderResultsTable(lastResults);
+
             } catch (err) {
                 console.error(`Error consultando ${numero}:`, err);
+                // append error to debug panel
+                if (debugPanel) {
+                    const entry = document.createElement('div');
+                    entry.style.whiteSpace = 'pre-wrap';
+                    entry.style.fontSize = '12px';
+                    entry.style.padding = '8px';
+                    entry.style.marginBottom = '8px';
+                    entry.style.background = 'rgba(255,0,0,0.03)';
+                    entry.style.borderRadius = '6px';
+                    entry.style.color = '#f8d7da';
+                    entry.innerText = `[${new Date().toLocaleTimeString()}] ${numero} -> EXCEPTION: ${String(err)}`;
+                    debugPanel.insertBefore(entry, debugPanel.children[1] || null);
+                }
+
+                lastResults.push({
+                    numero: numero,
+                    fecha_ultima_actuacion: null,
+                    despacho: 'N/A',
+                    departamento: 'N/A',
+                    demandante: 'N/A',
+                    demandado: 'N/A',
+                    id_proceso: null,
+                    is_today: false,
+                    tipo_proceso: '',
+                    clase_proceso: '',
+                    subclase_proceso: '',
+                    recurso: '',
+                    ponente: '',
+                    ubicacion: '',
+                    error: String(err)
+                });
+                renderResultsTable(lastResults);
             }
 
             // update progress
@@ -500,6 +586,9 @@
             const row = document.createElement('tr');
             row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
 
+            // Safely build the row HTML and pass the proc JSON as an encoded string argument
+            // encodeURIComponent produces no single quotes, so we can safely wrap in single quotes
+            const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
                 <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row">${proc.numero}</th>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandante)}</span><span class="full-text">${escapeHtml(demandante)}</span></td>
@@ -509,7 +598,7 @@
                 <td class="px-6 py-4 truncate-cell">${escapeHtml(ubic)}</td>
                 <td class="px-6 py-4">${escapeHtml(fecha)}</td>
                 <td class="px-6 py-4 text-right">
-                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess('${proc.numero}', ${encodeURIComponent(JSON.stringify(proc))})">
+                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess('${proc.numero}', '${encodedProc}')">
                         <span class="material-icons text-sm">bookmark_add</span>
                         Guardar
                     </button>
