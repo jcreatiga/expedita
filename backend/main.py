@@ -608,10 +608,10 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
 @app.post("/processes/batch-query")
 @limiter.limit("50/hour")  # Rate limit: 50 requests per hour
 async def batch_query_processes(
-    request: BatchQueryRequest,
+    batch_request: BatchQueryRequest,
     current_user = Depends(get_current_user),
     db = Depends(get_db),
-    http_request: Request = None
+    request: Request = None
 ):
     print(f"DEBUG: Batch query endpoint called by user {current_user.email} (ID: {current_user.id})")
 
@@ -620,7 +620,7 @@ async def batch_query_processes(
         raise HTTPException(status_code=500, detail="Database not available")
 
     # Parse numbers
-    numbers = [n.strip() for n in request.numbers.split(',') if n.strip()]
+    numbers = [n.strip() for n in batch_request.numbers.split(',') if n.strip()]
     print(f"DEBUG: Raw input: '{request.numbers}'")
     print(f"DEBUG: Parsed numbers: {numbers}")
 
@@ -648,8 +648,8 @@ async def batch_query_processes(
     print(f"DEBUG: Valid numbers to process: {numbers}")
 
     # Get client info for logging
-    client_ip = http_request.client.host if http_request and http_request.client else "unknown"
-    user_agent = http_request.headers.get("user-agent", "") if http_request else ""
+    client_ip = request.client.host if request and request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "") if request else ""
 
     # Log batch query start
     log_query(db, current_user.id, "", "batch_query", "started",
