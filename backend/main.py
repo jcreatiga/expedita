@@ -16,6 +16,7 @@ import json
 import requests
 import asyncio
 import time
+import uuid
 from fastapi import Request
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -588,6 +589,14 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
                     ponente = detalle.get('ponente', '') or ''
                     ubicacion = detalle.get('ubicacion', '') or ''
 
+                    # Log that detail was successfully fetched (this marks "fully consulted")
+                    try:
+                        detail_response_time = int((time.time() - start_time) * 1000)
+                        log_query(db, user_id, numero, "single_query", "detail_success",
+                                  f"Detail fetched for id_proceso={id_proceso}", detail_response_time, ip_address, user_agent)
+                    except Exception as log_err:
+                        print(f"DEBUG: Failed to log detail_success for {numero}: {log_err}")
+
                 except Exception as det_err:
                     # Log but continue; detailed info is optional for frontend display
                     print(f"DEBUG: Failed to fetch detalle for id_proceso={id_proceso}: {det_err}")
@@ -608,6 +617,7 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
                 "recurso": recurso,
                 "ponente": ponente,
                 "ubicacion": ubicacion,
+                "detail_fetched": bool(detalle_json),
                 "success": True
             }
         else:
@@ -661,8 +671,109 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
             "error": str(e)
         }
         return mock_data
-
-# Batch processing endpoint
+    
+    # Lightweight endpoint to query a single process (Consulta + Detalle) and persist for the current user.
+    # This endpoint lets the frontend call each radicado one-by-one and update a progress UI.
+    @app.get("/processes/single-query/{numero}")
+    async def single_query_endpoint(
+        numero: str,
+        current_user = Depends(get_current_user),
+        db = Depends(get_db),
+        request: Request = None
+    ):
+        """
+        Query a single radicado (calls Consulta and Detalle under the hood),
+        returns the processed result and saves/updates it for the authenticated user.
+        """
+        # Basic validation
+        if len(numero) != 23 or not numero.isdigit():
+            raise HTTPException(status_code=400, detail="Invalid 23-digit number")
+    
+        client_ip = request.client.host if request and request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "") if request else ""
+    
+        # Run the shared processing function which fetches both consulta and detalle
+        result = await process_single_judicial_query(numero, db, current_user.id if current_user else None, client_ip, user_agent)
+    
+        if not isinstance(result, dict) or not result.get("success"):
+            return {"status": "error", "detail": result.get("error", "Unknown error"), "raw": result}
+    
+        # Build the processed_result object (same shape as batch output)
+        processed_result = {
+            "numero": result.get("numero"),
+            "fecha_ultima_actuacion": result.get("fecha_ultima_actuacion").isoformat() if isinstance(result.get("fecha_ultima_actuacion"), (datetime.date, datetime.datetime)) else result.get("fecha_ultima_actuacion"),
+            "despacho": result.get("despacho"),
+            "departamento": result.get("departamento"),
+            "demandante": result.get("demandante"),
+            "demandado": result.get("demandado"),
+            "id_proceso": result.get("id_proceso"),
+            "is_today": False,
+            "tipo_proceso": result.get("tipo_proceso", ""),
+            "clase_proceso": result.get("clase_proceso", ""),
+            "subclase_proceso": result.get("subclase_proceso", ""),
+            "recurso": result.get("recurso", ""),
+            "ponente": result.get("ponente", ""),
+            "ubicacion": result.get("ubicacion", "")
+        }
+    
+        # Persist to user's saved processes table so the frontend can use /processes/my-processes later
+        if db:
+            try:
+                existing = db.query(UserProcess).filter_by(user_id=current_user.id, numero=processed_result["numero"]).first()
+                if existing:
+                    existing.id_proceso = processed_result.get("id_proceso") or existing.id_proceso
+                    existing.response_json = result.get("response_json") or existing.response_json
+                    existing.detalle_json = result.get("detalle_json") or existing.detalle_json
+                    # fecha_ultima_actuacion may be string or date - attempt to convert
+                    fecha_val = processed_result.get("fecha_ultima_actuacion")
+                    if fecha_val:
+                        try:
+                            existing.fecha_ultima_actuacion = datetime.datetime.fromisoformat(fecha_val).date()
+                        except:
+                            try:
+                                existing.fecha_ultima_actuacion = datetime.datetime.strptime(fecha_val, "%Y-%m-%d").date()
+                            except:
+                                pass
+                    existing.despacho = processed_result.get("despacho") or existing.despacho
+                    existing.departamento = processed_result.get("departamento") or existing.departamento
+                    existing.demandante = processed_result.get("demandante") or existing.demandante
+                    existing.demandado = processed_result.get("demandado") or existing.demandado
+                    existing.tipo_proceso = processed_result.get("tipo_proceso") or existing.tipo_proceso
+                    existing.clase_proceso = processed_result.get("clase_proceso") or existing.clase_proceso
+                    existing.subclase_proceso = processed_result.get("subclase_proceso") or existing.subclase_proceso
+                    existing.recurso = processed_result.get("recurso") or existing.recurso
+                    existing.ponente = processed_result.get("ponente") or existing.ponente
+                    existing.ubicacion = processed_result.get("ubicacion") or existing.ubicacion
+                    existing.updated_at = datetime.datetime.utcnow()
+                    db.commit()
+                else:
+                    user_process = UserProcess(
+                        user_id=current_user.id,
+                        numero=processed_result.get("numero"),
+                        id_proceso=processed_result.get("id_proceso"),
+                        response_json=result.get("response_json"),
+                        detalle_json=result.get("detalle_json"),
+                        fecha_ultima_actuacion=(datetime.datetime.fromisoformat(processed_result["fecha_ultima_actuacion"]).date()
+                                                if processed_result.get("fecha_ultima_actuacion") else None),
+                        despacho=processed_result.get("despacho"),
+                        departamento=processed_result.get("departamento"),
+                        demandante=processed_result.get("demandante"),
+                        demandado=processed_result.get("demandado"),
+                        tipo_proceso=processed_result.get("tipo_proceso"),
+                        clase_proceso=processed_result.get("clase_proceso"),
+                        subclase_proceso=processed_result.get("subclase_proceso"),
+                        recurso=processed_result.get("recurso"),
+                        ponente=processed_result.get("ponente"),
+                        ubicacion=processed_result.get("ubicacion")
+                    )
+                    db.add(user_process)
+                    db.commit()
+            except Exception as db_err:
+                print(f"DEBUG: Failed to persist single-query result for {numero}: {db_err}")
+    
+        return {"status": "success", "result": processed_result}
+    
+    # Batch processing endpoint
 @app.post("/processes/batch-query")
 @limiter.limit("50/hour")  # Rate limit: 50 requests per hour
 async def batch_query_processes(
@@ -760,7 +871,13 @@ async def batch_query_processes(
                 "demandante": result["demandante"],
                 "demandado": result["demandado"],
                 "id_proceso": result["id_proceso"],
-                "is_today": is_today
+                "is_today": is_today,
+                "tipo_proceso": result.get("tipo_proceso", ""),
+                "clase_proceso": result.get("clase_proceso", ""),
+                "subclase_proceso": result.get("subclase_proceso", ""),
+                "recurso": result.get("recurso", ""),
+                "ponente": result.get("ponente", ""),
+                "ubicacion": result.get("ubicacion", "")
             }
             processed_results.append(processed_result)
             print(f"DEBUG: Successfully processed {result['numero']}")

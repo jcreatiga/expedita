@@ -25,13 +25,15 @@ html,body{
 }
 
 .container {
-    max-width: 1100px;
-    margin: 32px auto;
+    /* allow wider layout for roomy tables while keeping a centered max width */
+    max-width: 1400px;
+    width: calc(100% - 48px);
+    margin: 28px auto;
     background: linear-gradient(180deg,var(--panel), #0d1114);
-    padding: 28px;
-    border-radius: 14px;
-    box-shadow: 0 6px 30px rgba(2,6,23,0.7), 0 1px 0 var(--surface-elev) inset;
-    border: 1px solid rgba(255,255,255,0.03);
+    padding: 36px;
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(2,6,23,0.75), 0 1px 0 var(--surface-elev) inset;
+    border: 1px solid rgba(255,255,255,0.04);
 }
 
 h1{
@@ -108,9 +110,19 @@ button.danger:hover { filter:brightness(0.95); }
 }
 .tab-button.active { background: linear-gradient(90deg,var(--primary), #0062d6); color:white; box-shadow: 0 4px 14px rgba(0,123,255,0.18); }
 
-table { width: 100%; border-collapse: collapse; margin-top: 12px; background: transparent; }
-th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.03); }
-th { background: rgba(255,255,255,0.02); font-weight:600; color:var(--muted); }
+/* Tables: more breathing room, bigger fonts and taller rows for readability */
+table { width: 100%; border-collapse: collapse; margin-top: 18px; background: transparent; }
+th, td { padding: 16px 20px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; font-size: 15px; }
+th { background: rgba(255,255,255,0.02); font-weight:700; color:var(--muted); letter-spacing: 0.02em; }
+
+/* Make the results container occupy more horizontal space and avoid "compressed" feeling */
+#results-table { min-width: 900px; }
+
+/* Improve truncated cell look and spacing */
+.truncate-cell { max-width: 280px; padding-right: 8px; }
+
+/* Increase row hover area and subtle elevation */
+tr:hover { transform: translateY(-2px); transition: transform 0.12s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
 
 .highlight-today { background-color: rgba(40,167,69,0.08) !important; border-left: 4px solid var(--success); }
 .error { color: #ff6b6b; }

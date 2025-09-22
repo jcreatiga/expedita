@@ -178,6 +178,17 @@
                         Probar Conexión API
                     </button>
                 </div>
+
+                <!-- Progress indicator -->
+                <div id="query-progress" class="mt-4 hidden">
+                    <div class="flex items-center justify-between mb-2">
+                        <div id="progress-text" class="text-sm text-secondary-text-light dark:text-secondary-text-dark">0 de 0 procesos consultados</div>
+                        <div id="progress-status" class="text-sm text-secondary-text-light dark:text-secondary-text-dark"></div>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div id="progress-bar" class="h-2 rounded-full bg-primary" style="width: 0%"></div>
+                    </div>
+                </div>
             </div>
 
             <div class="mt-12">
@@ -355,49 +366,89 @@
         }
     }
 
-    // Batch query (uses existing endpoint)
+    // Batch query (now calls single-query per radicado to enable progress updates)
     async function batchQuery() {
-        const numbers = document.getElementById('batch-numbers').value.trim();
-        if (!numbers) {
+        const raw = document.getElementById('batch-numbers').value.trim();
+        if (!raw) {
             alert('Por favor ingresa al menos un número de radicación');
             return;
         }
-        const numberList = numbers.split(',').map(n => n.trim()).filter(n => n);
-        if (numberList.length > 10) {
+        const numbers = raw.split(',').map(n => n.trim()).filter(n => n);
+        if (numbers.length > 10) {
             alert('Máximo 10 procesos por consulta');
             return;
         }
-        for (const num of numberList) {
-            if (num.length !== 23 && num.length !== 0) {
-                // allow shorter in demo but warn
+
+        // Validate and normalize
+        const validNumbers = [];
+        for (const num of numbers) {
+            if (num.length !== 23 || !/^\d+$/.test(num)) {
                 console.warn(`Formato inesperado para: ${num}`);
-            }
-        }
-
-        try {
-            const response = await fetch('/processes/batch-query', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
-                },
-                body: JSON.stringify({ numbers })
-            });
-            const data = await response.json();
-
-            if (response.ok) {
-                if (data.results && data.results.length > 0) {
-                    displayBatchResults(data.results);
-                } else {
-                    document.getElementById('query-result').innerHTML = '<p class="text-secondary-text-light dark:text-secondary-text-dark">No se encontraron resultados.</p>';
-                }
+                // still include but mark as invalid (backend will reject)
+                validNumbers.push(num);
             } else {
-                alert(data.detail || 'Error en la consulta');
+                validNumbers.push(num);
             }
-        } catch (error) {
-            console.error(error);
-            alert('Error de conexión. Verifica tu conexión a internet o intenta más tarde.');
         }
+
+        if (validNumbers.length === 0) {
+            alert('No hay números válidos para consultar.');
+            return;
+        }
+
+        // Show progress UI
+        const progressContainer = document.getElementById('query-progress');
+        const progressText = document.getElementById('progress-text');
+        const progressBar = document.getElementById('progress-bar');
+        const progressStatus = document.getElementById('progress-status');
+        progressContainer.classList.remove('hidden');
+        progressBar.style.width = '0%';
+        progressText.textContent = `0 de ${validNumbers.length} procesos consultados`;
+        progressStatus.textContent = 'Iniciando consultas...';
+
+        lastResults = [];
+        // Process sequentially to avoid blocking the judicial API
+        for (let i = 0; i < validNumbers.length; i++) {
+            const numero = validNumbers[i];
+            progressStatus.textContent = `Consultando ${i + 1} de ${validNumbers.length}: ${numero}`;
+            try {
+                const resp = await fetch(`/processes/single-query/${encodeURIComponent(numero)}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                const data = await resp.json();
+                if (resp.ok && data.status === 'success') {
+                    // push the processed result and re-render table incrementally
+                    lastResults.push(data.result);
+                    renderResultsTable(lastResults);
+                } else {
+                    // Show an inline error row / keep progress but log
+                    console.warn(`Consulta fallida para ${numero}:`, data);
+                }
+            } catch (err) {
+                console.error(`Error consultando ${numero}:`, err);
+            }
+
+            // update progress
+            const completed = i + 1;
+            const pct = Math.round((completed / validNumbers.length) * 100);
+            progressBar.style.width = `${pct}%`;
+            progressText.textContent = `${completed} de ${validNumbers.length} procesos consultados`;
+
+            // delay between requests to be polite to API (and mimic previous behavior)
+            if (i < validNumbers.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+        }
+
+        progressStatus.textContent = 'Completado';
+        // hide progress after short delay
+        setTimeout(() => {
+            progressContainer.classList.add('hidden');
+        }, 1200);
     }
 
     // Store last results for sorting / re-render
