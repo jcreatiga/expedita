@@ -66,6 +66,7 @@
             <div class="tabs">
                 <button class="tab-button active" onclick="showTab('query')">Consultar Procesos</button>
                 <button class="tab-button" onclick="showTab('saved')">Mis Procesos Guardados</button>
+                <button class="tab-button" onclick="showTab('logs')">Ver Logs de Debug</button>
             </div>
 
             <!-- Query Tab -->
@@ -83,6 +84,20 @@
                 <h2>Mis Procesos Guardados</h2>
                 <button onclick="loadSavedProcesses()">Actualizar Lista</button>
                 <div id="saved-result"></div>
+            </div>
+
+            <!-- Logs Tab -->
+            <div id="logs-tab" style="display: none;">
+                <h2>Logs de Debug</h2>
+                <p>Historial de consultas y errores para diagnóstico:</p>
+                <button onclick="loadLogs()">Cargar Logs</button>
+                <select id="log-filter" onchange="loadLogs()">
+                    <option value="">Todos los tipos</option>
+                    <option value="batch_query">Consultas por lote</option>
+                    <option value="single_query">Consultas individuales</option>
+                    <option value="api_test">Pruebas de API</option>
+                </select>
+                <div id="logs-result"></div>
             </div>
         </div>
     </div>
@@ -222,9 +237,12 @@
 
             document.getElementById('query-tab').style.display = tabName === 'query' ? 'block' : 'none';
             document.getElementById('saved-tab').style.display = tabName === 'saved' ? 'block' : 'none';
+            document.getElementById('logs-tab').style.display = tabName === 'logs' ? 'block' : 'none';
 
             if (tabName === 'saved') {
                 loadSavedProcesses();
+            } else if (tabName === 'logs') {
+                loadLogs();
             }
         }
 
@@ -453,6 +471,77 @@
             } catch (error) {
                 alert('Error de conexión');
             }
+        }
+
+        // Logs functions
+        async function loadLogs() {
+            if (!authToken) return;
+
+            const filter = document.getElementById('log-filter').value;
+            const url = filter ? `/logs?action=${filter}` : '/logs';
+
+            try {
+                const response = await fetch(url, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayLogs(data.logs);
+                } else {
+                    document.getElementById('logs-result').innerHTML = `<p class="error">${data.detail}</p>`;
+                }
+            } catch (error) {
+                document.getElementById('logs-result').innerHTML = '<p class="error">Error de conexión</p>';
+            }
+        }
+
+        function displayLogs(logs) {
+            if (!logs || logs.length === 0) {
+                document.getElementById('logs-result').innerHTML = '<p>No hay logs disponibles</p>';
+                return;
+            }
+
+            let html = `
+                <h3>Logs de Consultas (${logs.length})</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha/Hora</th>
+                            <th>Acción</th>
+                            <th>Número</th>
+                            <th>Estado</th>
+                            <th>Tiempo (ms)</th>
+                            <th>Mensaje</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            logs.forEach(log => {
+                const fecha = new Date(log.created_at).toLocaleString('es-CO');
+                const statusClass = log.status === 'success' ? 'success' :
+                                   log.status === 'error' ? 'error' : '';
+
+                html += `
+                    <tr>
+                        <td>${fecha}</td>
+                        <td>${log.action}</td>
+                        <td>${log.numero || '-'}</td>
+                        <td class="${statusClass}">${log.status}</td>
+                        <td>${log.response_time_ms || '-'}</td>
+                        <td>${log.message || '-'}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+
+            document.getElementById('logs-result').innerHTML = html;
         }
     </script>
 </body>

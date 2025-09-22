@@ -15,6 +15,8 @@ import os
 import json
 import requests
 import asyncio
+import time
+from fastapi import Request
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -124,6 +126,20 @@ if engine:
         detalle_json = Column(Text)
         timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
+    # Query logs table for debugging
+    class QueryLog(Base):
+        __tablename__ = 'query_logs'
+        id = Column(Integer, primary_key=True)
+        user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+        numero = Column(String(23))
+        action = Column(String(50))  # 'batch_query', 'single_query', 'api_test'
+        status = Column(String(20))  # 'success', 'error', 'timeout', 'connection_error'
+        message = Column(Text)
+        response_time = Column(Integer)  # milliseconds
+        ip_address = Column(String(45))
+        user_agent = Column(Text)
+        created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
     Base.metadata.create_all(engine)
 
 # Authentication helper functions (defined after database setup)
@@ -173,6 +189,28 @@ def get_db():
             db.close()
     else:
         yield None
+
+# Logging helper function
+def log_query(db, user_id=None, numero="", action="", status="", message="", response_time=0, ip_address="", user_agent=""):
+    """Log query actions for debugging purposes"""
+    if not db:
+        return
+
+    try:
+        log_entry = QueryLog(
+            user_id=user_id,
+            numero=numero,
+            action=action,
+            status=status,
+            message=message,
+            response_time=response_time,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+        db.add(log_entry)
+        db.commit()
+    except Exception as e:
+        print(f"Failed to log query: {e}")
 
 app = FastAPI(title="Sistema de Consulta Judicial", version="2.0.0")
 
@@ -233,8 +271,9 @@ def db_test():
         return {"status": "error", "message": f"Database error: {str(e)}"}
 
 @app.get("/api-test")
-def api_test():
+def api_test(request: Request, db = Depends(get_db)):
     """Test endpoint to check connectivity with Colombian Judicial API"""
+    start_time = time.time()
     test_url = "https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero=11001418902420250012300&SoloActivos=false&pagina=1"
 
     try:
@@ -246,29 +285,52 @@ def api_test():
 
         print(f"DEBUG: Testing API connectivity to: {test_url}")
         response = requests.get(test_url, headers=headers, timeout=30, verify=False)
-        print(f"DEBUG: API test response status: {response.status_code}")
+        response_time = int((time.time() - start_time) * 1000)
+        print(f"DEBUG: API test response status: {response.status_code}, Time: {response_time}ms")
+
+        # Log the API test
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "")
 
         if response.status_code == 200:
             data = response.json()
+            log_query(db, None, "11001418902420250012300", "api_test", "success",
+                     f"Status: {response.status_code}", response_time, client_ip, user_agent)
             return {
                 "status": "success",
                 "message": "API connection successful",
                 "response_status": response.status_code,
+                "response_time_ms": response_time,
                 "has_data": 'procesos' in data and len(data.get('procesos', [])) > 0
             }
         else:
+            log_query(db, None, "11001418902420250012300", "api_test", "http_error",
+                     f"Status: {response.status_code}", response_time, client_ip, user_agent)
             return {
                 "status": "error",
                 "message": f"API returned status {response.status_code}",
-                "response_status": response.status_code
+                "response_status": response.status_code,
+                "response_time_ms": response_time
             }
 
     except requests.exceptions.Timeout:
-        return {"status": "error", "message": "API request timed out"}
-    except requests.exceptions.ConnectionError:
-        return {"status": "error", "message": "Connection error - API may be blocking requests"}
+        response_time = int((time.time() - start_time) * 1000)
+        log_query(db, None, "11001418902420250012300", "api_test", "timeout",
+                 "Request timed out", response_time, request.client.host if request.client else "unknown",
+                 request.headers.get("user-agent", ""))
+        return {"status": "error", "message": "API request timed out", "response_time_ms": response_time}
+    except requests.exceptions.ConnectionError as e:
+        response_time = int((time.time() - start_time) * 1000)
+        log_query(db, None, "11001418902420250012300", "api_test", "connection_error",
+                 str(e), response_time, request.client.host if request.client else "unknown",
+                 request.headers.get("user-agent", ""))
+        return {"status": "error", "message": "Connection error - API may be blocking requests", "response_time_ms": response_time}
     except Exception as e:
-        return {"status": "error", "message": f"API test failed: {str(e)}"}
+        response_time = int((time.time() - start_time) * 1000)
+        log_query(db, None, "11001418902420250012300", "api_test", "error",
+                 str(e), response_time, request.client.host if request.client else "unknown",
+                 request.headers.get("user-agent", ""))
+        return {"status": "error", "message": f"API test failed: {str(e)}", "response_time_ms": response_time}
 
 @app.get("/query/{numero}")
 def query_api(numero: str):
@@ -424,11 +486,15 @@ def query_api(numero: str):
             return {"status": "success", "data": mock_data, "note": "Using mock data - API request failed", "error": str(e)}
 
 # Helper function to process a single judicial process
-async def process_single_judicial_query(numero: str) -> dict:
+async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_address="", user_agent="") -> dict:
     """Process a single judicial process query and return structured data"""
+    start_time = time.time()
+
     if len(numero) != 23 or not numero.isdigit():
-        print(f"DEBUG: Invalid number format: {numero}")
-        return {"error": f"Invalid 23-digit number: {numero}", "numero": numero}
+        message = f"Invalid number format: {numero}"
+        print(f"DEBUG: {message}")
+        log_query(db, user_id, numero, "single_query", "error", message, 0, ip_address, user_agent)
+        return {"error": message, "numero": numero}
 
     url = f"https://consultaprocesos.ramajudicial.gov.co:448/api/v2/Procesos/Consulta/NumeroRadicacion?numero={numero}&SoloActivos=false&pagina=1"
     print(f"DEBUG: Querying URL: {url}")
@@ -451,10 +517,13 @@ async def process_single_judicial_query(numero: str) -> dict:
 
         print(f"DEBUG: Making HTTP request to judicial API for {numero}")
         response = requests.get(url, headers=headers, timeout=60, verify=False)
-        print(f"DEBUG: Response status: {response.status_code}")
+        response_time = int((time.time() - start_time) * 1000)  # milliseconds
+        print(f"DEBUG: Response status: {response.status_code}, Time: {response_time}ms")
         response.raise_for_status()
         data = response.json()
         print(f"DEBUG: Successfully received data for {numero}")
+
+        log_query(db, user_id, numero, "single_query", "success", f"Status: {response.status_code}", response_time, ip_address, user_agent)
 
         # Extract process data
         if 'procesos' in data and len(data['procesos']) > 0:
@@ -494,19 +563,31 @@ async def process_single_judicial_query(numero: str) -> dict:
             return {"error": "No processes found", "numero": numero, "success": False}
 
     except requests.exceptions.Timeout as e:
-        print(f"DEBUG: Timeout error for {numero}: {str(e)}")
-        return {"error": f"Timeout connecting to judicial API: {str(e)}", "numero": numero, "success": False}
+        response_time = int((time.time() - start_time) * 1000)
+        message = f"Timeout connecting to judicial API: {str(e)}"
+        print(f"DEBUG: {message}")
+        log_query(db, user_id, numero, "single_query", "timeout", message, response_time, ip_address, user_agent)
+        return {"error": message, "numero": numero, "success": False}
 
     except requests.exceptions.ConnectionError as e:
-        print(f"DEBUG: Connection error for {numero}: {str(e)}")
-        return {"error": f"Connection error to judicial API: {str(e)}", "numero": numero, "success": False}
+        response_time = int((time.time() - start_time) * 1000)
+        message = f"Connection error to judicial API: {str(e)}"
+        print(f"DEBUG: {message}")
+        log_query(db, user_id, numero, "single_query", "connection_error", message, response_time, ip_address, user_agent)
+        return {"error": message, "numero": numero, "success": False}
 
     except requests.exceptions.HTTPError as e:
-        print(f"DEBUG: HTTP error for {numero}: {str(e)}")
-        return {"error": f"HTTP error from judicial API: {str(e)}", "numero": numero, "success": False}
+        response_time = int((time.time() - start_time) * 1000)
+        message = f"HTTP error from judicial API: {str(e)}"
+        print(f"DEBUG: {message}")
+        log_query(db, user_id, numero, "single_query", "http_error", message, response_time, ip_address, user_agent)
+        return {"error": message, "numero": numero, "success": False}
 
     except Exception as e:
-        print(f"DEBUG: General error for {numero}: {str(e)}")
+        response_time = int((time.time() - start_time) * 1000)
+        message = f"General error: {str(e)}"
+        print(f"DEBUG: {message}")
+        log_query(db, user_id, numero, "single_query", "error", message, response_time, ip_address, user_agent)
         # Fallback to mock data for testing
         mock_data = {
             "numero": numero,
@@ -529,7 +610,8 @@ async def process_single_judicial_query(numero: str) -> dict:
 async def batch_query_processes(
     request: BatchQueryRequest,
     current_user = Depends(get_current_user),
-    db = Depends(get_db)
+    db = Depends(get_db),
+    http_request: Request = None
 ):
     if not db:
         raise HTTPException(status_code=500, detail="Database not available")
@@ -543,6 +625,14 @@ async def batch_query_processes(
     if not numbers:
         raise HTTPException(status_code=400, detail="No valid numbers provided")
 
+    # Get client info for logging
+    client_ip = http_request.client.host if http_request and http_request.client else "unknown"
+    user_agent = http_request.headers.get("user-agent", "") if http_request else ""
+
+    # Log batch query start
+    log_query(db, current_user.id, "", "batch_query", "started",
+             f"Processing {len(numbers)} numbers", 0, client_ip, user_agent)
+
     # Process queries with delay between each to avoid overwhelming the API
     print(f"DEBUG: Processing {len(numbers)} queries with delays to avoid API blocking")
     results = []
@@ -555,10 +645,12 @@ async def batch_query_processes(
 
         print(f"DEBUG: Processing query {i+1}/{len(numbers)}: {numero}")
         try:
-            result = await process_single_judicial_query(numero)
+            result = await process_single_judicial_query(numero, db, current_user.id, client_ip, user_agent)
             results.append(result)
         except Exception as e:
             print(f"DEBUG: Exception processing {numero}: {e}")
+            log_query(db, current_user.id, numero, "batch_query", "exception",
+                     str(e), 0, client_ip, user_agent)
             results.append({"error": f"Processing exception: {str(e)}", "numero": numero, "success": False})
 
     # Process results and save to database
@@ -836,3 +928,38 @@ async def login_user(user: UserLogin, db = Depends(get_db)):
 @app.get("/auth/me")
 async def read_users_me(current_user = Depends(get_current_user)):
     return {"email": current_user.email, "id": current_user.id}
+
+# Logs endpoint for debugging
+@app.get("/logs")
+async def get_logs(
+    current_user = Depends(get_current_user),
+    db = Depends(get_db),
+    limit: int = 50,
+    action: str = None
+):
+    """Get query logs for debugging purposes (admin only for now)"""
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    # For now, only allow users to see their own logs
+    query = db.query(QueryLog).filter_by(user_id=current_user.id)
+
+    if action:
+        query = query.filter_by(action=action)
+
+    logs = query.order_by(QueryLog.created_at.desc()).limit(limit).all()
+
+    results = []
+    for log in logs:
+        results.append({
+            "id": log.id,
+            "numero": log.numero,
+            "action": log.action,
+            "status": log.status,
+            "message": log.message,
+            "response_time_ms": log.response_time,
+            "ip_address": log.ip_address,
+            "created_at": log.created_at.isoformat()
+        })
+
+    return {"logs": results, "total": len(results)}
