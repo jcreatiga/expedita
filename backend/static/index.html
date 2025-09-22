@@ -4,33 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema de Consulta Judicial</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f4f4f4; }
-        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; text-align: center; }
-        .auth-section, .app-section { display: none; }
-        .auth-section.show, .app-section.show { display: block; }
-        input, textarea { padding: 10px; margin: 5px; width: calc(100% - 22px); border: 1px solid #ccc; border-radius: 4px; }
-        textarea { height: 100px; resize: vertical; }
-        button { padding: 10px 20px; margin: 5px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; }
-        button:hover { background-color: #0056b3; }
-        button.secondary { background-color: #6c757d; }
-        button.secondary:hover { background-color: #545b62; }
-        button.danger { background-color: #dc3545; }
-        button.danger:hover { background-color: #c82333; }
-        #result { margin-top: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f9fa; font-weight: bold; }
-        .highlight-today { background-color: #d4edda !important; border-left: 4px solid #28a745; }
-        .error { color: red; }
-        .success { color: green; }
-        .user-info { background-color: #f8f9fa; padding: 10px; margin-bottom: 20px; border-radius: 4px; }
-        .tabs { margin-bottom: 20px; }
-        .tab-button { background-color: #e9ecef; border: none; padding: 10px 20px; margin-right: 5px; cursor: pointer; }
-        .tab-button.active { background-color: #007bff; color: white; }
-        .process-actions { display: flex; gap: 5px; }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="styles.css">
+    <!-- Minimal fallback to ensure dark background if CSS fails to load -->
+    <style>body{background:#0f1720;color:#e6eef8}</style>
 </head>
 <body>
     <div class="container">

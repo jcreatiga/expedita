@@ -1,0 +1,126 @@
+/* Dark theme styles for Sistema de Consulta Judicial */
+:root{
+    --bg:#0f1720;
+    --panel:#111520;
+    --muted:#9aa4b2;
+    --text:#e6eef8;
+    --primary:#007bff;
+    --primary-600:#0056b3;
+    --accent:#17a2b8;
+    --success:#28a745;
+    --danger:#dc3545;
+    --surface-elev: rgba(255,255,255,0.03);
+    --glass: rgba(255,255,255,0.02);
+}
+
+html,body{
+    height:100%;
+    margin:0;
+    padding:0;
+    background:linear-gradient(180deg,var(--bg),#07090b);
+    font-family: 'Roboto', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color:var(--text);
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+}
+
+.container {
+    max-width: 1100px;
+    margin: 32px auto;
+    background: linear-gradient(180deg,var(--panel), #0d1114);
+    padding: 28px;
+    border-radius: 14px;
+    box-shadow: 0 6px 30px rgba(2,6,23,0.7), 0 1px 0 var(--surface-elev) inset;
+    border: 1px solid rgba(255,255,255,0.03);
+}
+
+h1{
+    color:var(--text);
+    text-align:left;
+    margin:0 0 8px 0;
+    font-weight:500;
+    font-size:22px;
+}
+
+.user-info {
+    background: var(--glass);
+    padding: 10px;
+    margin-bottom: 18px;
+    border-radius: 10px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
+    color:var(--muted);
+}
+
+.auth-section, .app-section { display: none; }
+.auth-section.show, .app-section.show { display: block; }
+
+input, textarea {
+    padding: 12px;
+    margin: 8px 0;
+    width: 100%;
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 10px;
+    background-color: rgba(255,255,255,0.02);
+    color: var(--text);
+    box-sizing: border-box;
+    font-size: 15px;
+}
+
+textarea { height: 110px; resize: vertical; font-family: inherit; color:var(--text); }
+
+button {
+    padding: 10px 18px;
+    margin: 6px 6px 6px 0;
+    cursor: pointer;
+    border: none;
+    border-radius: 10px;
+    font-weight:500;
+    transition: all 0.18s ease;
+    box-shadow: 0 2px 8px rgba(2,6,23,0.6);
+}
+
+button.primary, .tab-button.active { background-color: var(--primary); color: #fff; }
+button.primary:hover { background-color: var(--primary-600); transform: translateY(-1px); }
+
+button.info { background-color: var(--accent); color:#fff; }
+button.info:hover { filter:brightness(0.95); transform: translateY(-1px); }
+
+button.secondary { background-color: rgba(255,255,255,0.04); color:var(--muted); }
+button.secondary:hover { background-color: rgba(255,255,255,0.06); color:var(--text); }
+
+button.danger { background-color: var(--danger); color:#fff; }
+button.danger:hover { filter:brightness(0.95); }
+
+#query-result, #saved-result, #logs-result { margin-top: 18px; color:var(--text); }
+
+.tabs { margin-bottom: 18px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+.tab-button {
+    background: rgba(255,255,255,0.03);
+    border:none;
+    padding:10px 16px;
+    border-radius:10px;
+    color:var(--muted);
+    cursor:pointer;
+}
+.tab-button.active { background: linear-gradient(90deg,var(--primary), #0062d6); color:white; box-shadow: 0 4px 14px rgba(0,123,255,0.18); }
+
+table { width: 100%; border-collapse: collapse; margin-top: 12px; background: transparent; }
+th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.03); }
+th { background: rgba(255,255,255,0.02); font-weight:600; color:var(--muted); }
+
+.highlight-today { background-color: rgba(40,167,69,0.08) !important; border-left: 4px solid var(--success); }
+.error { color: #ff6b6b; }
+.success { color: #7bd389; }
+
+.process-actions { display: flex; gap: 8px; }
+
+/* small screens */
+@media (max-width:720px){
+    .container{ padding:18px; margin:18px; border-radius:12px; }
+    button{ width:100%; }
+    .tabs{ flex-direction:column; align-items:stretch; }
+}
