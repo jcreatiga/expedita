@@ -50,7 +50,7 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     try:
-        with open("backend/static/index.html", "r", encoding="utf-8") as f:
+        with open("static/index.html", "r", encoding="utf-8") as f:
             html_content = f.read()
         return HTMLResponse(content=html_content)
     except FileNotFoundError:
@@ -111,6 +111,6 @@ def query_api(numero: str):
 @app.get("/app")
 def get_app():
     try:
-        return FileResponse("backend/static/index.html")
+        return FileResponse("static/index.html")
     except FileNotFoundError:
         return {"error": "Frontend file not found"}
