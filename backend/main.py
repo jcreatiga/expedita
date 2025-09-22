@@ -122,7 +122,7 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
-    with open("static/index.html", "r", encoding="utf-8") as f:
+    with open("backend/static/index.html", "r", encoding="utf-8") as f:
         html_content = f.read()
     return HTMLResponse(content=html_content)
 
@@ -161,4 +161,4 @@ def set_numero(numero: str):
 
 @app.get("/app")
 def get_app():
-    return FileResponse("static/index.html")
+    return FileResponse("backend/static/index.html")
