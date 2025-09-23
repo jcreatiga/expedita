@@ -652,7 +652,9 @@
             // Build row with tooltip on radicado
             const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
-                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row" title="idProceso: ${proc.idProceso || 'N/A'}">${proc.radicado}</th>
+                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row" title="idProceso: ${proc.idProceso || 'N/A'}">
+                    ${escapeHtml(proc.radicado)}
+                </th>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandante)}</span><span class="full-text">${escapeHtml(demandante)}</span></td>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandado)}</span><span class="full-text">${escapeHtml(demandado)}</span></td>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(juzgado)}</span><span class="full-text">${escapeHtml(juzgado)}</span></td>
@@ -662,7 +664,7 @@
                 <td class="px-6 py-4">${escapeHtml(fecha)}</td>
                 <td class="px-6 py-4 text-right">
                     ${proc.error ? `<span class="text-red-500 text-xs">${proc.error}</span>` : `
-                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess('${proc.radicado}', '${encodedProc}')">
+                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess(this, '${proc.radicado}', '${encodedProc}')">
                         <span class="material-icons text-sm">bookmark_add</span>
                         Guardar
                     </button>
@@ -759,29 +761,38 @@
     }
 
     // Helper to POST saved process to backend
-    async function saveProcess(radicado, procString) {
+    // New signature: saveProcess(buttonElement, radicado, procString)
+    async function saveProcess(btn, radicado, procString) {
+        if (!authToken) {
+            // If not authenticated, show login
+            alert('Debes iniciar sesión para guardar procesos.');
+            showAuth();
+            return;
+        }
+
+        // disable button optimistically
         try {
+            if (btn && typeof btn.setAttribute === 'function') {
+                btn.setAttribute('disabled', 'true');
+            }
             const proc = JSON.parse(decodeURIComponent(procString));
+            // Build payload using the same normalized keys used to render rows.
             const payload = {
-                numero: proc.radicado || radicado,
-                id_proceso: proc.idProceso || '',
-                // Send the backend-provided fechaUltimaActuacion as-is (backend will accept ISO or null)
-                fecha_ultima_actuacion: proc.fechaUltimaActuacion || null,
-                despacho: proc.juzgado || '',
-                departamento: '', // Not available in current API response
+                radicado: proc.radicado || radicado,
+                idProceso: proc.idProceso || proc.id_proceso || '',
                 demandante: proc.demandante || '',
                 demandado: proc.demandado || '',
-                response_json: JSON.stringify(proc._raw?.consulta || {}),
-                detalle_json: JSON.stringify(proc._raw?.detalle || {}),
-                tipo_proceso: proc.tipo || '', // Assuming 'tipo' from mock is 'tipo_proceso'
-                clase_proceso: proc.clase || '',
-                subclase_proceso: proc.subclase || '',
-                recurso: '', // Not available
-                ponente: '', // Not available
-                ubicacion: proc.ubicacion || ''
+                juzgado: proc.juzgado || proc.despacho || '',
+                clase: proc.clase || proc.clase_proceso || '',
+                subclase: proc.subclase || proc.subclase_proceso || '',
+                ubicacion: proc.ubicacion || '',
+                // Keep fecha as provided by the row (may be ISO or DD/MM/YYYY or null)
+                fecha: proc.fechaUltimaActuacion || proc.fecha_ultima_actuacion || null,
+                // include raw snapshot if present
+                _raw: proc._raw || null
             };
 
-            const resp = await fetch('/processes/save', {
+            const resp = await fetch('/api/saved', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -790,15 +801,56 @@
                 body: JSON.stringify(payload)
             });
 
-            const data = await resp.json();
-            if (resp.ok) {
-                alert(`Proceso ${radicado} guardado (${data.action})`);
+            let data;
+            try {
+                data = await resp.json();
+            } catch (e) {
+                data = null;
+            }
+
+            if (resp.ok && data && data.status === 'OK') {
+                // success toast
+                alert('Guardado');
+                // visually mark saved row: find the closest <tr> and add a green check near radicado
+                try {
+                    const row = btn ? btn.closest('tr') : null;
+                    if (row) {
+                        const th = row.querySelector('th[scope="row"]');
+                        if (th) {
+                            // append a small green check icon (material-icons) if not already present
+                            if (!th.querySelector('.saved-check .material-icons')) {
+                                const span = document.createElement('span');
+                                span.className = 'material-icons text-green-500 text-base saved-check';
+                                span.style.marginLeft = '6px';
+                                span.title = 'Guardado';
+                                span.textContent = 'check_circle';
+                                th.appendChild(span);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Could not mark saved row visually', e);
+                }
+                // Optionally refresh saved list if user is viewing saved tab
+                // If the saved tab is active, reload saved processes
+                if (document.getElementById('tab-saved') && document.getElementById('tab-saved').classList.contains('active')) {
+                    await loadSavedProcesses();
+                }
             } else {
-                alert(`Error guardando proceso: ${data.detail || JSON.stringify(data)}`);
+                // show backend message for 503 or other errors
+                if (resp.status === 503) {
+                    alert(data?.detail || 'No se puede guardar ahora');
+                } else {
+                    alert(data?.detail || JSON.stringify(data) || 'No se pudo guardar el proceso');
+                }
             }
         } catch (err) {
             console.error('saveProcess error:', err);
-            alert('Error guardando proceso (ver consola).');
+            alert(err?.message || 'Error guardando proceso (ver consola).');
+        } finally {
+            if (btn && typeof btn.removeAttribute === 'function') {
+                btn.removeAttribute('disabled');
+            }
         }
     }
 
@@ -935,25 +987,301 @@
     }
 
     // Saved processes and logs (light implementations)
+    // Helper: map saved API row to the table-facing row object
+    function mapSavedRowToTableRow(saved) {
+        return {
+            radicado: saved.numero || saved.radicado || '',
+            idProceso: saved.id_proceso || saved.idProceso || saved.id || '',
+            demandante: saved.demandante || '',
+            demandado: saved.demandado || '',
+            juzgado: saved.despacho || saved.juzgado || '',
+            clase: saved.clase_proceso || saved.clase || '',
+            subclase: saved.subclase_proceso || saved.subclase || '',
+            ubicacion: saved.ubicacion || '',
+            fechaUltimaActuacion: saved.fecha || saved.fecha_ultima_actuacion || saved.fechaUltimaActuacion || null,
+            _raw: saved._raw || null,
+            // expose metadata
+            savedId: saved.id || saved._id || null,
+            updatedAt: saved.updatedAt || saved.updated_at || saved.updated || null
+        };
+    }
+
+    // Helper: format incoming date either DD/MM/YYYY or ISO -> DD/MM/YYYY; null -> 'N/A'
+    function formatDateToDisplay(isoOrDDMMYYYY) {
+        if (!isoOrDDMMYYYY || isoOrDDMMYYYY === null) return 'N/A';
+        if (typeof isoOrDDMMYYYY !== 'string') isoOrDDMMYYYY = String(isoOrDDMMYYYY);
+
+        const v = isoOrDDMMYYYY.trim();
+        if (!v) return 'N/A';
+        // If already DD/MM/YYYY
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(v)) return v;
+        // If ISO-like YYYY-MM-DD
+        const isoMatch = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) {
+            return `${isoMatch[3]}/${isoMatch[2]}/${isoMatch[1]}`;
+        }
+        // Fallback to Date parse
+        try {
+            const d = new Date(v);
+            if (isNaN(d.getTime())) return 'N/A';
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const yyyy = d.getFullYear();
+            return `${dd}/${mm}/${yyyy}`;
+        } catch (e) {
+            return 'N/A';
+        }
+    }
+
+    // Render saved processes view (with checkboxes, acciones, and refresh controls)
     async function loadSavedProcesses(){
-        if(!authToken) return;
+        if(!authToken) {
+            showAuth();
+            return;
+        }
         const container = document.getElementById('query-result');
         container.innerHTML = '<div class="table-loading">Cargando procesos guardados...</div>';
 
         try{
-            const resp = await fetch('/processes/my-processes', {
+            const resp = await fetch('/api/saved', {
                 headers: { 'Authorization': `Bearer ${authToken}` }
             });
             const data = await resp.json();
-            if(resp.ok){
-                displayBatchResults(data.processes || []);
-            } else {
+
+            if (!resp.ok) {
+                if (resp.status === 503) {
+                    alert(data?.detail || 'No se puede acceder a procesos guardados ahora');
+                    container.innerHTML = `<div class="table-error">${data?.detail || 'No se puede acceder a procesos guardados ahora'}</div>`;
+                    return;
+                }
                 container.innerHTML = `<div class="table-error">Error cargando procesos guardados: ${data.detail || 'Error desconocido'}</div>`;
                 console.error('Error cargando procesos guardados:', data);
+                return;
             }
+
+            // Backend may return array directly or an object with rows/saved
+            let savedRows = [];
+            if (Array.isArray(data)) savedRows = data;
+            else if (Array.isArray(data.rows)) savedRows = data.rows;
+            else if (Array.isArray(data.saved)) savedRows = data.saved;
+            else if (Array.isArray(data.data)) savedRows = data.data;
+            else if (data && data.items && Array.isArray(data.items)) savedRows = data.items;
+            else savedRows = [];
+
+            // Map to display rows including metadata
+            const mapped = savedRows.map(s => mapSavedRowToTableRow(s));
+
+            // Sort by updatedAt desc if present (backend already sorts but be defensive)
+            mapped.sort((a,b) => {
+                const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+                const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+                return tb - ta;
+            });
+
+            // Build UI: top controls + table
+            const controls = `
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-3">
+                        <button id="btn-refresh-selected" class="bg-primary text-white px-4 py-2 rounded-md">Actualizar seleccionados</button>
+                        <button id="btn-refresh-all" class="bg-transparent border border-primary text-primary px-4 py-2 rounded-md">Actualizar todos</button>
+                    </div>
+                    <div id="progressStatus" class="text-sm text-secondary-text-light dark:text-secondary-text-dark"></div>
+                </div>
+            `;
+
+            const tableHtml = `
+                <div class="table-container">
+                    <table id="results-table" role="table" aria-label="Procesos Guardados">
+                        <thead>
+                            <tr>
+                                <th scope="col"><input id="check-all-saved" type="checkbox" /></th>
+                                <th scope="col">Radicado</th>
+                                <th scope="col">Demandante</th>
+                                <th scope="col">Demandado</th>
+                                <th scope="col">Juzgado</th>
+                                <th scope="col">Clase</th>
+                                <th scope="col">Subclase</th>
+                                <th scope="col">Ubicación</th>
+                                <th scope="col">Fecha Última Actuación</th>
+                                <th scope="col">Actualizado el</th>
+                                <th scope="col">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            container.innerHTML = controls + tableHtml;
+
+            // Populate rows
+            const tbody = document.getElementById('results-tbody');
+            for (const s of mapped) {
+                const fecha = formatDateToDisplay(s.fechaUltimaActuacion);
+                const updated = formatDateToDisplay(s.updatedAt);
+                const id = s.savedId || '';
+                const row = document.createElement('tr');
+                row.className = 'border-b dark:border-gray-700';
+                row.dataset.savedId = id;
+                row.innerHTML = `
+                    <td class="px-4 py-2 text-center"><input class="saved-checkbox" type="checkbox" data-id="${id}" /></td>
+                    <td class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap"><span class="radicado-text">${escapeHtml(s.radicado)}</span> <span class="saved-badge ml-2"></span></td>
+                    <td class="px-6 py-4 truncate-cell" data-col="demandante"><span>${escapeHtml(s.demandante)}</span></td>
+                    <td class="px-6 py-4 truncate-cell" data-col="demandado"><span>${escapeHtml(s.demandado)}</span></td>
+                    <td class="px-6 py-4 truncate-cell" data-col="juzgado"><span>${escapeHtml(s.juzgado)}</span></td>
+                    <td class="px-6 py-4 truncate-cell" data-col="clase"><span>${escapeHtml(s.clase)}</span></td>
+                    <td class="px-6 py-4 truncate-cell" data-col="subclase"><span>${escapeHtml(s.subclase)}</span></td>
+                    <td class="px-6 py-4 truncate-cell" data-col="ubicacion"><span>${escapeHtml(s.ubicacion)}</span></td>
+                    <td class="px-6 py-4" data-col="fechaUltimaActuacion">${escapeHtml(fecha)}</td>
+                    <td class="px-6 py-4 text-sm text-secondary-text-light" data-col="updatedAt">${escapeHtml(updated)}</td>
+                    <td class="px-6 py-4 text-right">
+                        <button class="mr-2 px-3 py-1 bg-primary text-white rounded text-sm" onclick="refreshSavedSingle('${id}')">Actualizar</button>
+                        <button class="px-3 py-1 bg-red-600 text-white rounded text-sm" onclick="deleteSaved('${id}', this)">Eliminar</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            }
+
+            // wire controls
+            document.getElementById('btn-refresh-selected').addEventListener('click', async () => {
+                const checked = Array.from(document.querySelectorAll('.saved-checkbox:checked')).map(cb => cb.dataset.id).filter(Boolean);
+                if (checked.length === 0) {
+                    if (!confirm('No hay procesos seleccionados. ¿Deseas actualizar todos?')) return;
+                    await refreshSaved(); // refresh all
+                } else {
+                    await refreshSaved(checked);
+                }
+            });
+            document.getElementById('btn-refresh-all').addEventListener('click', async () => {
+                if (!confirm('Actualizar todos los procesos guardados?')) return;
+                await refreshSaved(); // no ids -> refresh all
+            });
+
+            // check-all behavior
+            const checkAll = document.getElementById('check-all-saved');
+            checkAll.addEventListener('change', (e) => {
+                const checked = e.target.checked;
+                document.querySelectorAll('.saved-checkbox').forEach(cb => cb.checked = checked);
+            });
+
         } catch(err){
-            container.innerHTML = `<div class="table-error">Error de conexión al cargar procesos guardados.</div>`;
+            const container = document.getElementById('query-result');
             console.error('Error de conexión al cargar procesos guardados:', err);
+            alert('Error de conexión al cargar procesos guardados.');
+            container.innerHTML = `<div class="table-error">Error de conexión al cargar procesos guardados.</div>`;
+        }
+    }
+
+    // Refresh saved processes (ids optional array). Calls POST /api/saved/refresh
+    async function refreshSaved(ids) {
+        if (!authToken) { showAuth(); return; }
+        const progressEl = document.getElementById('progressStatus');
+        try {
+            progressEl.textContent = 'Iniciando actualización...';
+            const body = ids && ids.length ? { ids } : {};
+            const resp = await fetch('/api/saved/refresh', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(body)
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                if (resp.status === 503) {
+                    alert(data?.detail || 'No se puede actualizar ahora');
+                    progressEl.textContent = '';
+                    return;
+                }
+                alert(data?.detail || 'Error al actualizar procesos');
+                progressEl.textContent = '';
+                return;
+            }
+
+            // data should contain list of diffs per id
+            const changes = data.rows || data.results || data.changes || data || [];
+            // Show progress count if provided
+            if (Array.isArray(changes)) {
+                let total = changes.length;
+                let processed = 0;
+                for (const change of changes) {
+                    processed++;
+                    progressEl.textContent = `Actualizando ${processed}/${total}...`;
+                    if (change.changedFields && change.changedFields.length > 0) {
+                        // Highlight row in UI
+                        const id = change.id || change.savedId || change.saved_id;
+                        const tr = document.querySelector(`tr[data-saved-id="${id}"]`);
+                        if (tr) {
+                            // add badge
+                            const badgeCell = tr.querySelector('.saved-badge');
+                            if (badgeCell) badgeCell.innerHTML = `<span class="text-xs text-yellow-300 bg-yellow-900 px-2 py-0.5 rounded">Cambios</span>`;
+                            // highlight changed cells
+                            for (const cf of change.changedFields) {
+                                const cell = tr.querySelector(`[data-col="${cf}"]`);
+                                if (cell) {
+                                    cell.classList.add('bg-yellow-100', 'dark:bg-yellow-900');
+                                }
+                            }
+                        }
+                        // show simple alert summarizing changes
+                        try {
+                            const summary = change.changedFields.map(f => `${f}: ${JSON.stringify(change.before?.[f])} → ${JSON.stringify(change.after?.[f])}`).join('\n');
+                            alert(`Cambios detectados para ${change.id || change.savedId || 'id desconocido'}:\n${summary}`);
+                        } catch (e) {
+                            console.warn('Could not build summary alert', e);
+                        }
+                    }
+                }
+            } else {
+                // If server returned an object with diffs per id
+                alert('Actualización completada');
+            }
+
+            // After refresh, reload saved list to reflect updated snapshots/updatedAt
+            await loadSavedProcesses();
+            progressEl.textContent = '';
+        } catch (err) {
+            console.error('Error refreshing saved processes:', err);
+            alert('Error de conexión al actualizar procesos guardados.');
+            const progressEl2 = document.getElementById('progressStatus');
+            if (progressEl2) progressEl2.textContent = '';
+        }
+    }
+
+    // Refresh a single saved process (helper used by "Actualizar" button)
+    async function refreshSavedSingle(id) {
+        if (!id) return;
+        await refreshSaved([id]);
+    }
+
+    // Delete saved process
+    async function deleteSaved(id, btn) {
+        if (!id) return;
+        if (!confirm('¿Eliminar proceso guardado?')) return;
+        if (!authToken) { showAuth(); return; }
+        try {
+            const resp = await fetch(`/api/saved/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            const data = await resp.json().catch(() => null);
+            if (resp.ok) {
+                // remove row from UI
+                const tr = document.querySelector(`tr[data-saved-id="${id}"]`);
+                if (tr && tr.parentElement) tr.parentElement.removeChild(tr);
+                alert('Eliminado');
+            } else {
+                if (resp.status === 503) {
+                    alert(data?.detail || 'No se puede eliminar ahora');
+                } else {
+                    alert(data?.detail || JSON.stringify(data) || 'Error eliminando');
+                }
+            }
+        } catch (err) {
+            console.error('deleteSaved error:', err);
+            alert('Error de conexión al eliminar proceso guardado.');
         }
     }
 

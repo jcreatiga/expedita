@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, status
 import datetime
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from selenium.webdriver.common.by import By
 from passlib.context import CryptContext
@@ -25,7 +25,7 @@ from slowapi.middleware import SlowAPIMiddleware
 # and avoid defining models / creating sessions at import time.
 DB_AVAILABLE = True
 try:
-    from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey
+    from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey, UniqueConstraint
     from sqlalchemy.ext.declarative import declarative_base
     from sqlalchemy.orm import sessionmaker, relationship
     Base = declarative_base()
@@ -163,6 +163,30 @@ if engine and sessionmaker and Base:
         user_agent = Column(Text)
         created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+    # Saved processes table for user-saved "Procesos Guardados"
+    class SavedProcess(Base):
+        __tablename__ = "saved_processes"
+        id = Column(Integer, primary_key=True)
+        user_id = Column(Integer)  # avoid strict ForeignKey to support graceful DB-absence scenarios
+        radicado = Column(String(23), nullable=False)
+        id_proceso = Column(String(50))
+        demandante = Column(String(255))
+        demandado = Column(String(255))
+        juzgado = Column(String(255))
+        clase = Column(String(255))
+        subclase = Column(String(255))
+        ubicacion = Column(String(255))
+        fecha_ultima_actuacion = Column(Date)
+        snapshot_consulta = Column(Text)
+        snapshot_detalle = Column(Text)
+        created_at = Column(DateTime, default=datetime.datetime.utcnow)
+        updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+        __table_args__ = (
+            UniqueConstraint('user_id', 'radicado', name='uq_user_radicado'),
+            {'schema': None}
+        )
+
     Base.metadata.create_all(engine)
 else:
     # Ensure names exist to avoid NameError in other code paths (they will only be used if db is available)
@@ -170,6 +194,7 @@ else:
     UserProcess = None
     QueryResult = None
     QueryLog = None
+    SavedProcess = None
 
 # Authentication helper functions (defined after database setup)
 def get_user_by_email(db, email: str):
@@ -240,6 +265,80 @@ def log_query(db, user_id=None, numero="", action="", status="", message="", res
         db.commit()
     except Exception as e:
         print(f"Failed to log query: {e}")
+
+def to_ddmmyyyy(val):
+    """Normalize various date inputs to DD/MM/YYYY or return 'N/A' if not parseable."""
+    if not val:
+        return "N/A"
+    try:
+        if isinstance(val, (datetime.date, datetime.datetime)):
+            d = val if isinstance(val, datetime.date) else val.date()
+            return d.strftime("%d/%m/%Y")
+        if isinstance(val, str):
+            s = val.strip()
+            if not s:
+                return "N/A"
+            # Handle ISO with Z
+            try:
+                parsed = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+                return parsed.date().strftime("%d/%m/%Y")
+            except Exception:
+                pass
+            # Handle plain YYYY-MM-DD
+            try:
+                parsed = datetime.datetime.strptime(s, "%Y-%m-%d")
+                return parsed.date().strftime("%d/%m/%Y")
+            except Exception:
+                pass
+            # Handle DD/MM/YYYY
+            try:
+                parsed = datetime.datetime.strptime(s, "%d/%m/%Y")
+                return parsed.date().strftime("%d/%m/%Y")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return "N/A"
+
+def diff_rows(old: dict, new: dict):
+    """
+    Compare selected fields between old and new dicts.
+    Fields compared: demandante,demandado,juzgado,clase,subclase,ubicacion,fechaUltimaActuacion
+    Returns list of changed field names and normalized before/after dicts.
+    """
+    keys = ["demandante", "demandado", "juzgado", "clase", "subclase", "ubicacion", "fechaUltimaActuacion"]
+    changed = []
+    before = {}
+    after = {}
+    for k in keys:
+        old_v = old.get(k) if isinstance(old, dict) else None
+        new_v = new.get(k) if isinstance(new, dict) else None
+
+        # Normalize strings
+        def norm(v):
+            if v is None:
+                return ""
+            if isinstance(v, (datetime.date, datetime.datetime)):
+                return to_ddmmyyyy(v)
+            if isinstance(v, str):
+                return v.strip()
+            return str(v)
+
+        ov = norm(old_v)
+        nv = norm(new_v)
+
+        # For dates ensure dd/mm/yyyy normalization
+        if k == "fechaUltimaActuacion":
+            ov = to_ddmmyyyy(old_v)
+            nv = to_ddmmyyyy(new_v)
+
+        before[k] = ov if ov != "" else "N/A"
+        after[k] = nv if nv != "" else "N/A"
+
+        if ov != nv:
+            changed.append(k)
+
+    return changed, before, after
 
 app = FastAPI(title="Sistema de Consulta Judicial", version="2.0.0")
 
@@ -1424,3 +1523,322 @@ async def get_logs(
         })
 
     return {"logs": results, "total": len(results)}
+
+
+# -----------------------
+# Saved processes API (/api/saved)
+# -----------------------
+
+@app.post("/api/saved")
+async def api_saved_create(
+    payload: dict,
+    current_user = Depends(get_current_user),
+    db = Depends(get_db)
+):
+    # DB availability check
+    if not DB_AVAILABLE or Session is None or SavedProcess is None or db is None:
+        return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - saved processes disabled"})
+
+    radicado = payload.get("radicado")
+    if not radicado or not isinstance(radicado, str) or len(radicado) != 23:
+        return JSONResponse(status_code=400, content={"status":"error", "detail":"Invalid or missing 'radicado' (expected 23 chars)"})
+
+    # Extract fields from payload (frontend uses camelCase)
+    id_proceso = payload.get("idProceso") or payload.get("id_proceso") or None
+    demandante = payload.get("demandante")
+    demandado = payload.get("demandado")
+    juzgado = payload.get("juzgado")
+    clase = payload.get("clase")
+    subclase = payload.get("subclase")
+    ubicacion = payload.get("ubicacion")
+    fecha_input = payload.get("fechaUltimaActuacion") or payload.get("fecha_ultima_actuacion")
+    _raw = payload.get("_raw", {}) if isinstance(payload.get("_raw", {}), dict) else {}
+
+    # snapshot fields: store raw JSON strings when provided
+    snapshot_consulta = None
+    snapshot_detalle = None
+    try:
+        if "consulta" in _raw and _raw.get("consulta") is not None:
+            snapshot_consulta = json.dumps(_raw.get("consulta")) if isinstance(_raw.get("consulta"), (dict, list)) else str(_raw.get("consulta"))
+        if "detalle" in _raw and _raw.get("detalle") is not None:
+            snapshot_detalle = json.dumps(_raw.get("detalle")) if isinstance(_raw.get("detalle"), (dict, list)) else str(_raw.get("detalle"))
+    except Exception:
+        snapshot_consulta = str(_raw.get("consulta")) if _raw.get("consulta") is not None else None
+        snapshot_detalle = str(_raw.get("detalle")) if _raw.get("detalle") is not None else None
+
+    # Parse date for DB storage
+    fecha_db = None
+    if fecha_input:
+        try:
+            # Try ISO
+            fecha_db = datetime.datetime.fromisoformat(fecha_input.replace("Z", "+00:00")).date()
+        except Exception:
+            try:
+                fecha_db = datetime.datetime.strptime(fecha_input, "%d/%m/%Y").date()
+            except Exception:
+                try:
+                    fecha_db = datetime.datetime.strptime(fecha_input, "%Y-%m-%d").date()
+                except Exception:
+                    fecha_db = None
+
+    try:
+        existing = db.query(SavedProcess).filter_by(user_id=current_user.id, radicado=radicado).first()
+        if existing:
+            # Update
+            if id_proceso is not None:
+                existing.id_proceso = str(id_proceso)
+            if demandante is not None:
+                existing.demandante = demandante
+            if demandado is not None:
+                existing.demandado = demandado
+            if juzgado is not None:
+                existing.juzgado = juzgado
+            if clase is not None:
+                existing.clase = clase
+            if subclase is not None:
+                existing.subclase = subclase
+            if ubicacion is not None:
+                existing.ubicacion = ubicacion
+            if fecha_db:
+                existing.fecha_ultima_actuacion = fecha_db
+            if snapshot_consulta is not None:
+                existing.snapshot_consulta = snapshot_consulta
+            if snapshot_detalle is not None:
+                existing.snapshot_detalle = snapshot_detalle
+            existing.updated_at = datetime.datetime.utcnow()
+            db.commit()
+            db.refresh(existing)
+            status_code = 200
+            action = "updated"
+            saved = existing
+        else:
+            # Create new
+            new_row = SavedProcess(
+                user_id=current_user.id,
+                radicado=radicado,
+                id_proceso=str(id_proceso) if id_proceso is not None else None,
+                demandante=demandante,
+                demandado=demandado,
+                juzgado=juzgado,
+                clase=clase,
+                subclase=subclase,
+                ubicacion=ubicacion,
+                fecha_ultima_actuacion=fecha_db,
+                snapshot_consulta=snapshot_consulta,
+                snapshot_detalle=snapshot_detalle
+            )
+            db.add(new_row)
+            db.commit()
+            db.refresh(new_row)
+            status_code = 201
+            action = "created"
+            saved = new_row
+
+        response_obj = {
+            "status": "OK",
+            "saved": {
+                "id": saved.id,
+                "radicado": saved.radicado,
+                "idProceso": saved.id_proceso,
+                "demandante": saved.demandante,
+                "demandado": saved.demandado,
+                "juzgado": saved.juzgado,
+                "clase": saved.clase,
+                "subclase": saved.subclase,
+                "ubicacion": saved.ubicacion,
+                "fechaUltimaActuacion": saved.fecha_ultima_actuacion.strftime("%d/%m/%Y") if saved.fecha_ultima_actuacion else "N/A",
+                "createdAt": saved.created_at.isoformat() if saved.created_at else None,
+                "updatedAt": saved.updated_at.isoformat() if saved.updated_at else None
+            }
+        }
+        return JSONResponse(status_code=status_code, content=response_obj)
+    except Exception as e:
+        # On DB error
+        print(f"ERROR: Failed to upsert saved process for user {current_user.id}: {e}")
+        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
+
+
+@app.get("/api/saved")
+async def api_saved_list(
+    current_user = Depends(get_current_user),
+    db = Depends(get_db)
+):
+    if not DB_AVAILABLE or Session is None or SavedProcess is None or db is None:
+        return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - saved processes disabled"})
+
+    try:
+        rows = db.query(SavedProcess).filter_by(user_id=current_user.id).order_by(SavedProcess.updated_at.desc()).all()
+        out = []
+        for r in rows:
+            out.append({
+                "id": r.id,
+                "radicado": r.radicado,
+                "idProceso": r.id_proceso,
+                "demandante": r.demandante,
+                "demandado": r.demandado,
+                "juzgado": r.juzgado,
+                "clase": r.clase,
+                "subclase": r.subclase,
+                "ubicacion": r.ubicacion,
+                "fechaUltimaActuacion": r.fecha_ultima_actuacion.strftime("%d/%m/%Y") if r.fecha_ultima_actuacion else "N/A",
+                "createdAt": r.created_at.isoformat() if r.created_at else None,
+                "updatedAt": r.updated_at.isoformat() if r.updated_at else None
+            })
+        return {"status":"OK", "rows": out}
+    except Exception as e:
+        print(f"ERROR: Failed to list saved processes for user {current_user.id}: {e}")
+        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
+
+
+@app.delete("/api/saved/{saved_id}")
+async def api_saved_delete(
+    saved_id: int,
+    current_user = Depends(get_current_user),
+    db = Depends(get_db)
+):
+    if not DB_AVAILABLE or Session is None or SavedProcess is None or db is None:
+        return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - saved processes disabled"})
+
+    try:
+        row = db.query(SavedProcess).filter_by(id=saved_id, user_id=current_user.id).first()
+        if not row:
+            return JSONResponse(status_code=404, content={"status":"error", "detail":"Saved process not found"})
+        db.delete(row)
+        db.commit()
+        return {"status":"OK", "deletedId": saved_id}
+    except Exception as e:
+        print(f"ERROR: Failed to delete saved process {saved_id} for user {current_user.id}: {e}")
+        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
+
+
+@app.post("/api/saved/refresh")
+async def api_saved_refresh(
+    payload: dict = None,
+    current_user = Depends(get_current_user),
+    db = Depends(get_db),
+    request: Request = None
+):
+    if not DB_AVAILABLE or Session is None or SavedProcess is None or db is None:
+        return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - saved processes disabled"})
+
+    ids = None
+    if isinstance(payload, dict):
+        ids = payload.get("ids")
+
+    try:
+        query = db.query(SavedProcess).filter_by(user_id=current_user.id)
+        if ids and isinstance(ids, list):
+            query = query.filter(SavedProcess.id.in_(ids))
+        saved_rows = query.all()
+    except Exception as e:
+        print(f"ERROR: Failed to load saved processes for refresh for user {current_user.id}: {e}")
+        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
+
+    client_ip = request.client.host if request and request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "") if request else ""
+
+    checked = 0
+    updated = 0
+    rows_result = []
+    errors = []
+
+    for s in saved_rows:
+        checked += 1
+        try:
+            # Call helper to get fresh data. Use await since function is async.
+            res = await process_single_judicial_query(s.radicado, db=None, user_id=None, ip_address=client_ip, user_agent=user_agent)
+        except Exception as e:
+            errors.append({"id": s.id, "radicado": s.radicado, "error": f"Exception during fetch: {str(e)}"})
+            continue
+
+        if not isinstance(res, dict) or not res.get("success"):
+            errors.append({"id": s.id, "radicado": s.radicado, "error": res.get("error", "No data")})
+            # still include in rows with no changes
+            rows_result.append({"id": s.id, "radicado": s.radicado, "changedFields": []})
+            continue
+
+        # Build normalized 'new' dict
+        new_row = {
+            "demandante": res.get("demandante") or "",
+            "demandado": res.get("demandado") or "",
+            "juzgado": res.get("despacho") or "",
+            "clase": res.get("clase_proceso") or "",
+            "subclase": res.get("subclase_proceso") or "",
+            "ubicacion": res.get("ubicacion") or "",
+            "fechaUltimaActuacion": to_ddmmyyyy(res.get("fecha_ultima_actuacion"))
+        }
+
+        old_row = {
+            "demandante": s.demandante or "",
+            "demandado": s.demandado or "",
+            "juzgado": s.juzgado or "",
+            "clase": s.clase or "",
+            "subclase": s.subclase or "",
+            "ubicacion": s.ubicacion or "",
+            "fechaUltimaActuacion": to_ddmmyyyy(s.fecha_ultima_actuacion)
+        }
+
+        changed_fields, before_vals, after_vals = diff_rows(old_row, new_row)
+
+        if changed_fields:
+            # Apply updates
+            try:
+                s.demandante = new_row.get("demandante") or s.demandante
+                s.demandado = new_row.get("demandado") or s.demandado
+                s.juzgado = new_row.get("juzgado") or s.juzgado
+                s.clase = new_row.get("clase") or s.clase
+                s.subclase = new_row.get("subclase") or s.subclase
+                s.ubicacion = new_row.get("ubicacion") or s.ubicacion
+                # Parse fecha back to date
+                try:
+                    parsed_date = None
+                    fu = res.get("fecha_ultima_actuacion")
+                    if fu:
+                        if isinstance(fu, (datetime.date, datetime.datetime)):
+                            parsed_date = fu if isinstance(fu, datetime.date) else fu.date()
+                        elif isinstance(fu, str):
+                            try:
+                                parsed_date = datetime.datetime.fromisoformat(fu.replace("Z", "+00:00")).date()
+                            except Exception:
+                                try:
+                                    parsed_date = datetime.datetime.strptime(fu, "%d/%m/%Y").date()
+                                except Exception:
+                                    try:
+                                        parsed_date = datetime.datetime.strptime(fu, "%Y-%m-%d").date()
+                                    except Exception:
+                                        parsed_date = None
+                    if parsed_date:
+                        s.fecha_ultima_actuacion = parsed_date
+                except Exception:
+                    pass
+
+                # Update snapshots if available
+                if res.get("response_json") is not None:
+                    s.snapshot_consulta = res.get("response_json") if isinstance(res.get("response_json"), str) else json.dumps(res.get("response_json"))
+                if res.get("detalle_json") is not None:
+                    s.snapshot_detalle = res.get("detalle_json") if isinstance(res.get("detalle_json"), str) else json.dumps(res.get("detalle_json"))
+
+                s.updated_at = datetime.datetime.utcnow()
+                db.commit()
+                updated += 1
+                rows_result.append({
+                    "id": s.id,
+                    "radicado": s.radicado,
+                    "before": before_vals,
+                    "after": after_vals,
+                    "changedFields": changed_fields
+                })
+            except Exception as e:
+                print(f"ERROR: Failed to update saved process {s.id}: {e}")
+                errors.append({"id": s.id, "radicado": s.radicado, "error": f"DB update failed: {str(e)}"})
+                rows_result.append({"id": s.id, "radicado": s.radicado, "changedFields": []})
+        else:
+            rows_result.append({"id": s.id, "radicado": s.radicado, "changedFields": []})
+
+    return {
+        "status": "OK",
+        "checked": checked,
+        "updated": updated,
+        "rows": rows_result,
+        "errors": errors
+    }
