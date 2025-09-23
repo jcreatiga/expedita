@@ -205,7 +205,10 @@
 
             <div class="mt-12">
                 <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Resultados</h2>
-                <div id="query-result" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+                <div id="query-result">
+                    <!-- Table and controls will be rendered here by JavaScript -->
+                    <div class="table-loading">Cargando resultados...</div>
+                </div>
             </div>
         </main>
     </div>
@@ -425,9 +428,8 @@
         }
 
         lastResults = [];
-        // Process sequentially to avoid blocking the judicial API
-        for (let i = 0; i < validNumbers.length; i++) {
-            const numero = validNumbers[i];
+        // Use Promise.allSettled for parallel fetching
+        const promises = validNumbers.map(async (numero, i) => {
             progressStatus.textContent = `Consultando ${i + 1} de ${validNumbers.length}: ${numero}`;
             try {
                 const resp = await fetch(`/processes/single-query/${encodeURIComponent(numero)}`, {
@@ -454,12 +456,11 @@
                 }
 
                 if (resp.ok && data.status === 'success' && data.result) {
-                    // push the processed result
-                    lastResults.push(data.result);
+                    return data.result;
                 } else {
-                    // If the backend returned an error, create a placeholder row so user sees it
                     const errDetail = (data && (data.detail || data.raw || data.error)) || 'Error desconocido';
-                    lastResults.push({
+                    console.warn(`Consulta fallida para ${numero}:`, errDetail);
+                    return {
                         radicado: numero,
                         idProceso: null,
                         demandante: 'N/A',
@@ -470,16 +471,10 @@
                         ubicacion: 'N/A',
                         fechaUltimaActuacion: 'N/A',
                         error: String(errDetail)
-                    });
-                    console.warn(`Consulta fallida para ${numero}:`, errDetail);
+                    };
                 }
-
-                // Re-render after each item so the table appears progressively
-                renderResultsTable(lastResults);
-
             } catch (err) {
                 console.error(`Error consultando ${numero}:`, err);
-                // append error to debug panel
                 if (debugPanel) {
                     const entry = document.createElement('div');
                     entry.style.whiteSpace = 'pre-wrap';
@@ -492,8 +487,7 @@
                     entry.innerText = `[${new Date().toLocaleTimeString()}] ${numero} -> EXCEPTION: ${String(err)}`;
                     debugPanel.insertBefore(entry, debugPanel.children[1] || null);
                 }
-
-                lastResults.push({
+                return {
                     radicado: numero,
                     idProceso: null,
                     demandante: 'N/A',
@@ -504,21 +498,20 @@
                     ubicacion: 'N/A',
                     fechaUltimaActuacion: 'N/A',
                     error: String(err)
-                });
-                renderResultsTable(lastResults);
+                };
+            } finally {
+                // Update progress bar after each promise settles
+                const completed = lastResults.length + 1; // This is not accurate for parallel
+                const total = validNumbers.length;
+                const pct = Math.round((completed / total) * 100);
+                progressBar.style.width = `${pct}%`;
+                progressText.textContent = `${completed} de ${total} procesos consultados`;
             }
+        });
 
-            // update progress
-            const completed = i + 1;
-            const pct = Math.round((completed / validNumbers.length) * 100);
-            progressBar.style.width = `${pct}%`;
-            progressText.textContent = `${completed} de ${validNumbers.length} procesos consultados`;
-
-            // delay between requests to be polite to API (and mimic previous behavior)
-            if (i < validNumbers.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1500));
-            }
-        }
+        const results = await Promise.allSettled(promises);
+        lastResults = results.map(result => result.status === 'fulfilled' ? result.value : result.reason);
+        renderResultsTable(lastResults);
 
         progressStatus.textContent = 'Completado';
         // hide progress after short delay
@@ -578,6 +571,7 @@
                     <tbody id="results-tbody">
                     </tbody>
                 </table>
+                <div id="pagination-controls" class="flex justify-center items-center gap-2 mt-4"></div>
             </div>
         `;
 
@@ -630,12 +624,13 @@
             const clase = proc.clase || 'N/A';
             const subclase = proc.subclase || 'N/A';
             const ubicacion = proc.ubicacion || 'N/A';
-            const fecha = proc.fechaUltimaActuacion || 'N/A';
+            const fecha = formateaFecha(proc.fechaUltimaActuacion); // Use helper for formatting
 
             const row = document.createElement('tr');
             row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
 
             // Build row with tooltip on radicado
+            const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
                 <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row" title="idProceso: ${proc.idProceso || 'N/A'}">${proc.radicado}</th>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandante)}</span><span class="full-text">${escapeHtml(demandante)}</span></td>
@@ -646,10 +641,12 @@
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(ubicacion)}</span><span class="full-text">${escapeHtml(ubicacion)}</span></td>
                 <td class="px-6 py-4">${escapeHtml(fecha)}</td>
                 <td class="px-6 py-4 text-right">
+                    ${proc.error ? `<span class="text-red-500 text-xs">${proc.error}</span>` : `
                     <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess('${proc.radicado}', '${encodedProc}')">
                         <span class="material-icons text-sm">bookmark_add</span>
                         Guardar
                     </button>
+                    `}
                 </td>
             `;
             tbody.appendChild(row);
@@ -657,26 +654,17 @@
 
         // Add pagination controls if needed
         const totalPages = Math.ceil(filteredResults.length / pageSize);
+        const paginationControls = document.getElementById('pagination-controls');
+
         if (totalPages > 1) {
             const paginationHtml = `
-                <div class="flex justify-center items-center gap-2 mt-4">
-                    <button onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''} class="px-3 py-1 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded text-sm">Anterior</button>
-                    <span class="text-sm text-secondary-text-light dark:text-secondary-text-dark">Página ${currentPage} de ${totalPages}</span>
-                    <button onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''} class="px-3 py-1 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded text-sm">Siguiente</button>
-                </div>
+                <button onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''} class="px-3 py-1 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded text-sm">Anterior</button>
+                <span class="text-sm text-secondary-text-light dark:text-secondary-text-dark">Página ${currentPage} de ${totalPages}</span>
+                <button onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''} class="px-3 py-1 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded text-sm">Siguiente</button>
             `;
-            const existingPagination = document.getElementById('pagination-controls');
-            if (existingPagination) {
-                existingPagination.innerHTML = paginationHtml;
-            } else {
-                const paginationDiv = document.createElement('div');
-                paginationDiv.id = 'pagination-controls';
-                paginationDiv.innerHTML = paginationHtml;
-                tbody.parentElement.parentElement.appendChild(paginationDiv);
-            }
+            paginationControls.innerHTML = paginationHtml;
         } else {
-            const existingPagination = document.getElementById('pagination-controls');
-            if (existingPagination) existingPagination.innerHTML = '';
+            paginationControls.innerHTML = '';
         }
     }
 
@@ -691,7 +679,7 @@
 
     function displayBatchResults(results){
         // Normalize results to the expected structure
-        lastResults = results.map(r => {
+        allResults = results.map(r => {
             return {
                 radicado: r.radicado || r.numero || '',
                 idProceso: r.idProceso || r.id_proceso || '',
@@ -701,16 +689,27 @@
                 clase: r.clase || r.clase_proceso || 'N/A',
                 subclase: r.subclase || r.subclase_proceso || 'N/A',
                 ubicacion: r.ubicacion || 'N/A',
-                fechaUltimaActuacion: r.fechaUltimaActuacion || r.fecha_ultima_actuacion || 'N/A'
+                fechaUltimaActuacion: r.fechaUltimaActuacion || r.fecha_ultima_actuacion || 'N/A',
+                _raw: r._raw || null // Keep raw data for debug if needed
             };
         });
-        renderResultsTable(lastResults);
+        renderResultsTable(allResults);
     }
 
     // Simple sort implementation (toggles asc/desc)
     let currentSort = { col: null, dir: 1 }; // 1 asc, -1 desc
     function sortTable(col){
         if (!col) return;
+        
+        // Update aria-sort attributes
+        document.querySelectorAll('#results-table th').forEach(th => {
+            if (th.onclick && th.onclick.toString().includes(`sortTable('${col}')`)) {
+                th.setAttribute('aria-sort', currentSort.col === col && currentSort.dir === 1 ? 'ascending' : 'descending');
+            } else {
+                th.setAttribute('aria-sort', 'none');
+            }
+        });
+
         if (currentSort.col === col) currentSort.dir = -currentSort.dir;
         else { currentSort.col = col; currentSort.dir = 1; }
 
@@ -733,18 +732,18 @@
             const payload = {
                 numero: proc.radicado || radicado,
                 id_proceso: proc.idProceso || '',
-                fecha_ultima_actuacion: proc.fechaUltimaActuacion || null,
+                fecha_ultima_actuacion: proc.fechaUltimaActuacion ? new Date(proc.fechaUltimaActuacion).toISOString().split('T')[0] : null, // Ensure ISO date string
                 despacho: proc.juzgado || '',
-                departamento: '',
+                departamento: '', // Not available in current API response
                 demandante: proc.demandante || '',
                 demandado: proc.demandado || '',
                 response_json: JSON.stringify(proc._raw?.consulta || {}),
                 detalle_json: JSON.stringify(proc._raw?.detalle || {}),
-                tipo_proceso: '',
+                tipo_proceso: proc.tipo || '', // Assuming 'tipo' from mock is 'tipo_proceso'
                 clase_proceso: proc.clase || '',
                 subclase_proceso: proc.subclase || '',
-                recurso: '',
-                ponente: '',
+                recurso: '', // Not available
+                ponente: '', // Not available
                 ubicacion: proc.ubicacion || ''
             };
 
@@ -780,6 +779,37 @@
             .replace(/'/g, '&#039;');
     }
 
+    // Helper to format date to DD/MM/YYYY
+    function formateaFecha(iso) {
+        if (!iso) return 'N/A';
+        try {
+            const d = new Date(iso);
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const yyyy = d.getFullYear();
+            return `${dd}/${mm}/${yyyy}`;
+        } catch (e) {
+            console.error("Error formatting date:", iso, e);
+            return 'N/A';
+        }
+    }
+
+    // Helper to parse sujetosProcesales
+    function parseSujetos(s) {
+        if (!s) return { demandante: 'N/A', demandado: 'N/A' };
+        const parts = s.split('|').map(x => x.trim());
+        const ds = [], dd = [];
+        for (const p of parts) {
+            const lower = p.toLowerCase();
+            if (lower.startsWith('demandante:')) ds.push(p.split(':')[1].trim());
+            if (lower.startsWith('demandado:')) dd.push(p.split(':')[1].trim());
+        }
+        return {
+            demandante: ds.length ? ds.join(', ') : 'N/A',
+            demandado: dd.length ? dd.join(', ') : 'N/A',
+        };
+    }
+
     async function testAPIConnection(){
         try{
             const response = await fetch('/api-test');
@@ -797,38 +827,53 @@
     // Saved processes and logs (light implementations)
     async function loadSavedProcesses(){
         if(!authToken) return;
+        const container = document.getElementById('query-result');
+        container.innerHTML = '<div class="table-loading">Cargando procesos guardados...</div>';
+
         try{
             const resp = await fetch('/processes/my-processes', {
                 headers: { 'Authorization': `Bearer ${authToken}` }
             });
             const data = await resp.json();
             if(resp.ok){
-                // reuse display logic
                 displayBatchResults(data.processes || []);
             } else {
-                alert(data.detail || 'Error cargando procesos guardados');
+                container.innerHTML = `<div class="table-error">Error cargando procesos guardados: ${data.detail || 'Error desconocido'}</div>`;
+                console.error('Error cargando procesos guardados:', data);
             }
         } catch(err){
-            console.error(err);
-            alert('Error de conexión');
+            container.innerHTML = `<div class="table-error">Error de conexión al cargar procesos guardados.</div>`;
+            console.error('Error de conexión al cargar procesos guardados:', err);
         }
     }
 
     async function loadLogs(){
         if(!authToken) return;
+        const container = document.getElementById('query-result');
+        container.innerHTML = '<div class="table-loading">Cargando logs...</div>';
+
         try{
             const resp = await fetch('/logs', { headers: { 'Authorization': `Bearer ${authToken}` }});
             const data = await resp.json();
             if(resp.ok){
-                // show logs in query-result for now
-                const container = document.getElementById('query-result');
-                container.innerHTML = '<pre class="text-sm text-secondary-text-light dark:text-secondary-text-dark">' + JSON.stringify(data.logs || [], null, 2) + '</pre>';
+                if (data.logs && data.logs.length > 0) {
+                    // Display logs in a pre-formatted block, not a table for now
+                    container.innerHTML = `
+                        <div class="bg-panel-light dark:bg-panel-dark p-6 rounded-lg shadow-md overflow-x-auto">
+                            <h3 class="text-lg font-semibold mb-4 text-text-light dark:text-text-dark">Historial de Logs</h3>
+                            <pre class="text-sm text-secondary-text-light dark:text-secondary-text-dark whitespace-pre-wrap">${JSON.stringify(data.logs, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = '<div class="table-empty">No hay logs disponibles.</div>';
+                }
             } else {
-                alert('Error cargando logs');
+                container.innerHTML = `<div class="table-error">Error cargando logs: ${data.detail || 'Error desconocido'}</div>`;
+                console.error('Error cargando logs:', data);
             }
         } catch(e){
-            console.error(e);
-            alert('Error de conexión');
+            container.innerHTML = `<div class="table-error">Error de conexión al cargar logs.</div>`;
+            console.error('Error de conexión al cargar logs:', e);
         }
     }
 </script>

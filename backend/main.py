@@ -1081,14 +1081,16 @@ async def get_user_processes(
     results = []
     for process in processes:
         results.append({
-            "id": process.id,
-            "numero": process.numero,
-            "fecha_ultima_actuacion": process.fecha_ultima_actuacion.isoformat() if process.fecha_ultima_actuacion else None,
-            "despacho": process.despacho,
-            "departamento": process.departamento,
+            "radicado": process.numero,
+            "idProceso": process.id_proceso,
             "demandante": process.demandante,
             "demandado": process.demandado,
-            "id_proceso": process.id_proceso,
+            "juzgado": process.despacho,
+            "clase": process.clase_proceso,
+            "subclase": process.subclase_proceso,
+            "ubicacion": process.ubicacion,
+            "fechaUltimaActuacion": process.fecha_ultima_actuacion.strftime("%d/%m/%Y") if process.fecha_ultima_actuacion else "N/A",
+            "id": process.id, # For delete operations
             "is_today": process.fecha_ultima_actuacion == today if process.fecha_ultima_actuacion else False,
             "created_at": process.created_at.isoformat()
         })
