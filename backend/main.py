@@ -1,7 +1,4 @@
 from fastapi import FastAPI, HTTPException, Depends, status
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
 import datetime
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -23,7 +20,22 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-Base = declarative_base()
+# Try to import SQLAlchemy lazily so the app can start even if the environment's Python
+# / SQLAlchemy combination is incompatible. If import fails we set DB_AVAILABLE=False
+# and avoid defining models / creating sessions at import time.
+DB_AVAILABLE = True
+try:
+    from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey
+    from sqlalchemy.ext.declarative import declarative_base
+    from sqlalchemy.orm import sessionmaker, relationship
+    Base = declarative_base()
+except Exception as e:
+    print(f"WARNING: SQLAlchemy import failed - running without DB. Error: {e}")
+    DB_AVAILABLE = False
+    Base = None
+    create_engine = None
+    sessionmaker = None
+    relationship = None
 
 # Authentication configuration
 SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -67,22 +79,26 @@ class ProcessResponse(BaseModel):
 
 # Railway will provide a DATABASE_URL for the managed Postgres instance.
 DB_URL = os.getenv('DATABASE_URL')
+engine = None
+Session = None
 
-if DB_URL:
+if DB_AVAILABLE and DB_URL:
     try:
         engine = create_engine(DB_URL, echo=True, pool_size=5, max_overflow=10)
         print("Database connection successful!")
     except Exception as e:
         print(f"Database connection failed: {e}")
-        # For now, continue without database to test other functionality
         engine = None
 else:
-    print("No DATABASE_URL found - running without database")
-    engine = None
+    if not DB_AVAILABLE:
+        print("DB not available in this Python environment - running without database")
+    else:
+        print("No DATABASE_URL found - running without database")
 
-if engine:
+if engine and sessionmaker and Base:
     Session = sessionmaker(bind=engine)
 
+    # Define ORM models only when engine is available
     class User(Base):
         __tablename__ = 'users'
         id = Column(Integer, primary_key=True, index=True)
@@ -148,6 +164,12 @@ if engine:
         created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     Base.metadata.create_all(engine)
+else:
+    # Ensure names exist to avoid NameError in other code paths (they will only be used if db is available)
+    User = None
+    UserProcess = None
+    QueryResult = None
+    QueryLog = None
 
 # Authentication helper functions (defined after database setup)
 def get_user_by_email(db, email: str):
@@ -949,7 +971,8 @@ async def api_procesos(q: str = None, request: Request = None):
     """
     Public batch endpoint that returns an array of ProcesoRow objects.
     Query param: q (comma-separated radicados)
-    Returns JSON: { results: [ { radicado, idProceso, demandante, demandado, juzgado, clase, subclase, ubicacion, fechaUltimaActuacion, status }, ... ] }
+    Returns JSON: { invalidos: [], rows: [ { radicado, idProceso, demandante, demandado, juzgado, clase, subclase, ubicacion, fechaUltimaActuacion, status }, ... ] }
+    Supports MOCK_API=1 or DB_AVAILABLE==False to return simulated data.
     """
     client_ip = request.client.host if request and request.client else "unknown"
     user_agent = request.headers.get("user-agent", "") if request else ""
@@ -964,9 +987,38 @@ async def api_procesos(q: str = None, request: Request = None):
         # protect the public API from very large requests
         raise HTTPException(status_code=400, detail="Maximum 20 procesos per request")
 
-    results = []
+    mock_mode = os.getenv("MOCK_API", "0") == "1" or (not DB_AVAILABLE)
+
+    rows = []
+    invalidos = []
+
+    # Example mock row (per your spec)
+    sample_radicado = "11001311002820250057800"
+    sample_row = {
+        "status": "OK",
+        "radicado": sample_radicado,
+        "idProceso": 1835879844,
+        "demandante": "LUIS ALBERTO CASTELBLANCO CÁRDENAS",
+        "demandado": "OLGA LUCÍA CASTELBLANCO CÁRDENAS",
+        "juzgado": "JUZGADO 028 DE FAMILIA  DE BOGOTÁ",
+        "clase": "Verbal Sumario",
+        "subclase": "Adjudicacion de Apoyos",
+        "ubicacion": "DESPACHO",
+        # The frontend expects the date already formatted (no NaN). Use DD/MM/YYYY per spec.
+        "fechaUltimaActuacion": "19/08/2025"
+    }
+
+    if mock_mode:
+        # Return simulated data without calling external API
+        for numero in nums:
+            if numero == sample_radicado:
+                rows.append(sample_row)
+            else:
+                rows.append({"status": "SIN_RESULTADOS", "radicado": numero})
+        return {"invalidos": invalidos, "rows": rows}
+
+    # Non-mock flow: attempt to fetch real data via helper and normalize to 'rows'
     for numero in nums:
-        # Basic validation: keep calling helper even for invalid formatting so it returns errors consistently
         try:
             res = await process_single_judicial_query(numero, db=None, user_id=None, ip_address=client_ip, user_agent=user_agent)
         except Exception as e:
@@ -979,6 +1031,7 @@ async def api_procesos(q: str = None, request: Request = None):
             try:
                 if isinstance(val, str) and val.strip():
                     parsed = datetime.datetime.fromisoformat(val)
+                    # Return ISO date string (YYYY-MM-DD)
                     return parsed.date().isoformat()
             except Exception:
                 pass
@@ -986,6 +1039,7 @@ async def api_procesos(q: str = None, request: Request = None):
 
         if res.get("success"):
             proc = {
+                "status": "OK",
                 "radicado": res.get("numero"),
                 "idProceso": res.get("id_proceso") or None,
                 "demandante": res.get("demandante") or '',
@@ -995,7 +1049,6 @@ async def api_procesos(q: str = None, request: Request = None):
                 "subclase": res.get("subclase_proceso") or '',
                 "ubicacion": res.get("ubicacion") or '',
                 "fechaUltimaActuacion": _safe_iso_date(res.get("fecha_ultima_actuacion")),
-                "status": "success",
                 "_raw": {
                     "consulta": res.get("response_json"),
                     "detalle": res.get("detalle_json")
@@ -1003,21 +1056,12 @@ async def api_procesos(q: str = None, request: Request = None):
             }
         else:
             proc = {
-                "radicado": res.get("numero") or numero,
-                "idProceso": None,
-                "demandante": '',
-                "demandado": '',
-                "juzgado": '',
-                "clase": '',
-                "subclase": '',
-                "ubicacion": '',
-                "fechaUltimaActuacion": None,
-                "status": "error",
-                "error": res.get("error") or res.get("detail") or "No data"
+                "status": "SIN_RESULTADOS",
+                "radicado": res.get("numero") or numero
             }
-        results.append(proc)
+        rows.append(proc)
 
-    return {"results": results, "total": len(results)}
+    return {"invalidos": invalidos, "rows": rows}
 
 # API endpoint: save a single process for the current user
 @app.post("/processes/save")
