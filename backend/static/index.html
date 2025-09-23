@@ -460,20 +460,15 @@
                     // If the backend returned an error, create a placeholder row so user sees it
                     const errDetail = (data && (data.detail || data.raw || data.error)) || 'Error desconocido';
                     lastResults.push({
-                        numero: numero,
-                        fecha_ultima_actuacion: null,
-                        despacho: 'N/A',
-                        departamento: 'N/A',
+                        radicado: numero,
+                        idProceso: null,
                         demandante: 'N/A',
                         demandado: 'N/A',
-                        id_proceso: null,
-                        is_today: false,
-                        tipo_proceso: '',
-                        clase_proceso: '',
-                        subclase_proceso: '',
-                        recurso: '',
-                        ponente: '',
-                        ubicacion: '',
+                        juzgado: 'N/A',
+                        clase: 'N/A',
+                        subclase: 'N/A',
+                        ubicacion: 'N/A',
+                        fechaUltimaActuacion: 'N/A',
                         error: String(errDetail)
                     });
                     console.warn(`Consulta fallida para ${numero}:`, errDetail);
@@ -499,20 +494,15 @@
                 }
 
                 lastResults.push({
-                    numero: numero,
-                    fecha_ultima_actuacion: null,
-                    despacho: 'N/A',
-                    departamento: 'N/A',
+                    radicado: numero,
+                    idProceso: null,
                     demandante: 'N/A',
                     demandado: 'N/A',
-                    id_proceso: null,
-                    is_today: false,
-                    tipo_proceso: '',
-                    clase_proceso: '',
-                    subclase_proceso: '',
-                    recurso: '',
-                    ponente: '',
-                    ubicacion: '',
+                    juzgado: 'N/A',
+                    clase: 'N/A',
+                    subclase: 'N/A',
+                    ubicacion: 'N/A',
+                    fechaUltimaActuacion: 'N/A',
                     error: String(err)
                 });
                 renderResultsTable(lastResults);
@@ -551,7 +541,7 @@
             return;
         }
 
-        // Controls for filter and pagination
+        // Controls for filter and pagination (above table)
         const controlsHtml = `
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                 <div class="flex items-center gap-4">
@@ -569,19 +559,19 @@
             </div>
         `;
 
-        // Table with improved container and accessibility
+        // Table with correct columns
         const tableHtml = `
             <div class="table-container">
                 <table id="results-table" role="table" aria-label="Resultados de consulta de procesos judiciales">
                     <thead>
                         <tr>
-                            <th scope="col" onclick="sortTable('numero')" style="cursor:pointer;" aria-sort="none">Radicado</th>
+                            <th scope="col" onclick="sortTable('radicado')" style="cursor:pointer;" aria-sort="none">Radicado</th>
                             <th scope="col" onclick="sortTable('demandante')" style="cursor:pointer;" aria-sort="none">Demandante</th>
                             <th scope="col" onclick="sortTable('demandado')" style="cursor:pointer;" aria-sort="none">Demandado</th>
-                            <th scope="col" onclick="sortTable('despacho')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
-                            <th scope="col" onclick="sortTable('clase_proceso')" style="cursor:pointer;" aria-sort="none">Clase</th>
+                            <th scope="col" onclick="sortTable('juzgado')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
+                            <th scope="col" onclick="sortTable('clase')" style="cursor:pointer;" aria-sort="none">Clase</th>
+                            <th scope="col" onclick="sortTable('subclase')" style="cursor:pointer;" aria-sort="none">Subclase</th>
                             <th scope="col" onclick="sortTable('ubicacion')" style="cursor:pointer;" aria-sort="none">Ubicación</th>
-                            <th scope="col" onclick="sortTable('fecha_ultima_actuacion')" style="cursor:pointer;" aria-sort="none">Fecha Última Actuación</th>
                             <th scope="col">Acciones</th>
                         </tr>
                     </thead>
@@ -605,11 +595,12 @@
     function filterTable() {
         const filterValue = document.getElementById('table-filter').value.toLowerCase();
         filteredResults = allResults.filter(proc =>
-            (proc.numero || '').toLowerCase().includes(filterValue) ||
+            (proc.radicado || '').toLowerCase().includes(filterValue) ||
             (proc.demandante || '').toLowerCase().includes(filterValue) ||
             (proc.demandado || '').toLowerCase().includes(filterValue) ||
-            (proc.despacho || '').toLowerCase().includes(filterValue) ||
-            (proc.clase_proceso || '').toLowerCase().includes(filterValue) ||
+            (proc.juzgado || '').toLowerCase().includes(filterValue) ||
+            (proc.clase || '').toLowerCase().includes(filterValue) ||
+            (proc.subclase || '').toLowerCase().includes(filterValue) ||
             (proc.ubicacion || '').toLowerCase().includes(filterValue)
         );
         currentPage = 1;
@@ -633,28 +624,29 @@
         const pageResults = filteredResults.slice(startIndex, endIndex);
 
         pageResults.forEach(proc => {
-            const fecha = proc.fecha_ultima_actuacion ? (new Date(proc.fecha_ultima_actuacion)).toLocaleDateString('es-CO') : 'N/A';
             const demandante = proc.demandante || 'N/A';
             const demandado = proc.demandado || 'N/A';
-            const despacho = proc.despacho || 'Información no disponible.';
-            const clase = proc.clase_proceso || proc.claseProceso || 'N/A';
-            const ubic = proc.ubicacion || proc.ubicacion || 'N/A';
+            const juzgado = proc.juzgado || 'Información no disponible.';
+            const clase = proc.clase || 'N/A';
+            const subclase = proc.subclase || 'N/A';
+            const ubicacion = proc.ubicacion || 'N/A';
+            const fecha = proc.fechaUltimaActuacion || 'N/A';
 
             const row = document.createElement('tr');
             row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
 
-            // Safely build the row HTML and pass the proc JSON as an encoded string argument
-            const encodedProc = encodeURIComponent(JSON.stringify(proc));
+            // Build row with tooltip on radicado
             row.innerHTML = `
-                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row">${proc.numero}</th>
+                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row" title="idProceso: ${proc.idProceso || 'N/A'}">${proc.radicado}</th>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandante)}</span><span class="full-text">${escapeHtml(demandante)}</span></td>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandado)}</span><span class="full-text">${escapeHtml(demandado)}</span></td>
-                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(despacho)}</span><span class="full-text">${escapeHtml(despacho)}</span></td>
-                <td class="px-6 py-4 truncate-cell">${escapeHtml(clase)}</td>
-                <td class="px-6 py-4 truncate-cell">${escapeHtml(ubic)}</td>
+                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(juzgado)}</span><span class="full-text">${escapeHtml(juzgado)}</span></td>
+                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(clase)}</span><span class="full-text">${escapeHtml(clase)}</span></td>
+                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(subclase)}</span><span class="full-text">${escapeHtml(subclase)}</span></td>
+                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(ubicacion)}</span><span class="full-text">${escapeHtml(ubicacion)}</span></td>
                 <td class="px-6 py-4">${escapeHtml(fecha)}</td>
                 <td class="px-6 py-4 text-right">
-                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess('${proc.numero}', '${encodedProc}')">
+                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess('${proc.radicado}', '${encodedProc}')">
                         <span class="material-icons text-sm">bookmark_add</span>
                         Guardar
                     </button>
@@ -698,13 +690,18 @@
     }
 
     function displayBatchResults(results){
-        // Normalize results (ensure keys for clase_proceso/ubicacion exist)
+        // Normalize results to the expected structure
         lastResults = results.map(r => {
             return {
-                ...r,
-                clase_proceso: r.clase_proceso || r.claseProceso || '',
-                ubicacion: r.ubicacion || r.ubicacion || '',
-                fecha_ultima_actuacion: r.fecha_ultima_actuacion || r.fechaUltimaActuacion || r.fechaUltimaActuacionISO || null
+                radicado: r.radicado || r.numero || '',
+                idProceso: r.idProceso || r.id_proceso || '',
+                demandante: r.demandante || 'N/A',
+                demandado: r.demandado || 'N/A',
+                juzgado: r.juzgado || r.despacho || 'N/A',
+                clase: r.clase || r.clase_proceso || 'N/A',
+                subclase: r.subclase || r.subclase_proceso || 'N/A',
+                ubicacion: r.ubicacion || 'N/A',
+                fechaUltimaActuacion: r.fechaUltimaActuacion || r.fecha_ultima_actuacion || 'N/A'
             };
         });
         renderResultsTable(lastResults);
@@ -717,35 +714,37 @@
         if (currentSort.col === col) currentSort.dir = -currentSort.dir;
         else { currentSort.col = col; currentSort.dir = 1; }
 
-        lastResults.sort((a,b) => {
+        allResults.sort((a,b) => {
             const va = (a[col] || '').toString().toLowerCase();
             const vb = (b[col] || '').toString().toLowerCase();
             if (va < vb) return -1 * currentSort.dir;
             if (va > vb) return 1 * currentSort.dir;
             return 0;
         });
-        renderResultsTable(lastResults);
+        filteredResults = [...allResults];
+        currentPage = 1;
+        renderTablePage();
     }
 
     // Helper to POST saved process to backend
-    async function saveProcess(numero, procString) {
+    async function saveProcess(radicado, procString) {
         try {
             const proc = JSON.parse(decodeURIComponent(procString));
             const payload = {
-                numero: proc.numero || numero,
-                id_proceso: proc.id_proceso || proc.idProceso || proc.id_proceso || '',
-                fecha_ultima_actuacion: proc.fecha_ultima_actuacion || proc.fechaUltimaActuacion || null,
-                despacho: proc.despacho || '',
-                departamento: proc.departamento || '',
+                numero: proc.radicado || radicado,
+                id_proceso: proc.idProceso || '',
+                fecha_ultima_actuacion: proc.fechaUltimaActuacion || null,
+                despacho: proc.juzgado || '',
+                departamento: '',
                 demandante: proc.demandante || '',
                 demandado: proc.demandado || '',
-                response_json: proc.response_json || proc.responseJson || null,
-                detalle_json: proc.detalle_json || proc.detalleJson || null,
-                tipo_proceso: proc.tipo_proceso || '',
-                clase_proceso: proc.clase_proceso || '',
-                subclase_proceso: proc.subclase_proceso || '',
-                recurso: proc.recurso || '',
-                ponente: proc.ponente || '',
+                response_json: JSON.stringify(proc._raw?.consulta || {}),
+                detalle_json: JSON.stringify(proc._raw?.detalle || {}),
+                tipo_proceso: '',
+                clase_proceso: proc.clase || '',
+                subclase_proceso: proc.subclase || '',
+                recurso: '',
+                ponente: '',
                 ubicacion: proc.ubicacion || ''
             };
 
@@ -760,7 +759,7 @@
 
             const data = await resp.json();
             if (resp.ok) {
-                alert(`Proceso ${numero} guardado (${data.action})`);
+                alert(`Proceso ${radicado} guardado (${data.action})`);
             } else {
                 alert(`Error guardando proceso: ${data.detail || JSON.stringify(data)}`);
             }
