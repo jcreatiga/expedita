@@ -381,7 +381,6 @@
         }
     }
 
-    // Batch query (tries public batch endpoint first, falls back to per-radicado calls)
     async function batchQuery() {
         const raw = document.getElementById('batch-numbers').value.trim();
         if (!raw) {
@@ -393,7 +392,7 @@
             alert('Máximo 10 procesos por consulta');
             return;
         }
-    
+
         // Validate and normalize
         const validNumbers = [];
         for (const num of numbers) {
@@ -404,12 +403,12 @@
                 validNumbers.push(num);
             }
         }
-    
+
         if (validNumbers.length === 0) {
             alert('No hay números válidos para consultar.');
             return;
         }
-    
+
         // Show progress UI
         const progressContainer = document.getElementById('query-progress');
         const progressText = document.getElementById('progress-text');
@@ -419,15 +418,15 @@
         progressBar.style.width = '0%';
         progressText.textContent = `0 de ${validNumbers.length} procesos consultados`;
         progressStatus.textContent = 'Iniciando consultas...';
-    
+
         // Ensure debug panel is visible and cleared
         const debugPanel = document.getElementById('debug-panel');
         if (debugPanel) {
             debugPanel.classList.remove('hidden');
             debugPanel.innerHTML = '<h3 class="text-sm font-medium mb-2 text-secondary-text-light dark:text-secondary-text-dark">Debug responses (most recent arriba)</h3>';
         }
-    
-        // Call the batch endpoint /api/procesos?q=... (no fallback to single-query)
+
+        // Make single GET request to /api/procesos?q=...
         try {
             progressStatus.textContent = 'Consultando endpoint batch /api/procesos...';
             const q = validNumbers.join(',');
@@ -435,8 +434,34 @@
                 method: 'GET',
                 headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {}
             });
-            const data = await resp.json();
-    
+
+            // Defensive parsing: read text then JSON.parse
+            const text = await resp.text();
+            let payload;
+            try {
+                payload = JSON.parse(text);
+            } catch (e) {
+                console.error('Invalid JSON from /api/procesos:', e, text);
+                const container = document.getElementById('query-result');
+                container.innerHTML = `<div class="table-error">Respuesta inválida del servidor.</div>`;
+                progressStatus.textContent = 'Error';
+                progressBar.style.width = '0%';
+                if (debugPanel) {
+                    const entry = document.createElement('div');
+                    entry.style.whiteSpace = 'pre-wrap';
+                    entry.style.fontSize = '12px';
+                    entry.style.padding = '8px';
+                    entry.style.marginBottom = '8px';
+                    entry.style.background = 'rgba(255,0,0,0.03)';
+                    entry.style.borderRadius = '6px';
+                    entry.style.color = '#f8d7da';
+                    entry.innerText = `[${new Date().toLocaleTimeString()}] BATCH -> INVALID_JSON\n${text}`;
+                    debugPanel.insertBefore(entry, debugPanel.children[1] || null);
+                }
+                setTimeout(() => progressContainer.classList.add('hidden'), 1200);
+                return;
+            }
+
             // Append raw batch response to debug panel
             if (debugPanel) {
                 const entry = document.createElement('div');
@@ -447,39 +472,50 @@
                 entry.style.background = resp.ok ? 'rgba(255,255,255,0.02)' : 'rgba(255,0,0,0.03)';
                 entry.style.borderRadius = '6px';
                 entry.style.color = '#cbd5e1';
-                entry.innerText = `[${new Date().toLocaleTimeString()}] BATCH -> ${JSON.stringify(data, null, 2)}`;
+                entry.innerText = `[${new Date().toLocaleTimeString()}] BATCH -> ${text}`;
                 debugPanel.insertBefore(entry, debugPanel.children[1] || null);
             }
-    
+
             if (!resp.ok) {
                 // Server returned an error
-                console.error('Batch endpoint returned HTTP error', resp.status, data);
+                console.error('Batch endpoint returned HTTP error', resp.status, payload);
                 progressStatus.textContent = `Error batch: ${resp.status}`;
                 progressBar.style.width = '0%';
                 // Show error to user and stop
                 const container = document.getElementById('query-result');
-                container.innerHTML = `<div class="table-error">Error al consultar el endpoint batch: ${data.detail || resp.status}</div>`;
+                container.innerHTML = `<div class="table-error">Error al consultar el endpoint batch: ${payload?.detail || resp.status}</div>`;
                 setTimeout(() => progressContainer.classList.add('hidden'), 1200);
                 return;
             }
-    
-            if (!data || !Array.isArray(data.results)) {
-                console.error('Batch endpoint returned unexpected payload', data);
+
+            // Validate payload shape
+            if (!payload || !Array.isArray(payload.rows)) {
+                console.error('Batch endpoint returned unexpected payload', payload);
                 const container = document.getElementById('query-result');
                 container.innerHTML = `<div class="table-error">Respuesta inesperada del servidor.</div>`;
                 progressStatus.textContent = 'Error';
                 setTimeout(() => progressContainer.classList.add('hidden'), 1200);
                 return;
             }
-    
-            // Success - render results (the backend returns canonical keys)
-            displayBatchResults(data.results);
+
+            // Normalize rows for table
+            const rows = payload.rows.map(normalizaRowParaTabla);
+
+            // Set UI state based on statuses
+            if (rows.length > 0) {
+                const anyNotSin = rows.some(r => (r.status || '') !== 'SIN_RESULTADOS');
+                progressStatus.textContent = anyNotSin ? 'Completado' : 'Sin resultados';
+            } else {
+                progressStatus.textContent = 'Sin resultados';
+            }
+
+            // Render results using normalized rows
+            displayBatchResults(rows);
             progressBar.style.width = '100%';
-            progressText.textContent = `${data.results.length} de ${validNumbers.length} procesos consultados`;
-            progressStatus.textContent = 'Completado (batch)';
+            progressText.textContent = `${rows.length} de ${validNumbers.length} procesos consultados`;
             setTimeout(() => progressContainer.classList.add('hidden'), 1200);
             return;
-    
+
         } catch (err) {
             console.error('Error calling /api/procesos:', err);
             if (debugPanel) {
@@ -494,7 +530,7 @@
                 entry.innerText = `[${new Date().toLocaleTimeString()}] BATCH_FAIL -> EXCEPTION: ${String(err)}`;
                 debugPanel.insertBefore(entry, debugPanel.children[1] || null);
             }
-    
+
             const container = document.getElementById('query-result');
             container.innerHTML = `<div class="table-error">No se pudo conectar al endpoint batch. Intenta más tarde.</div>`;
             progressStatus.textContent = 'Error';
@@ -608,7 +644,7 @@
             const clase = proc.clase || 'N/A';
             const subclase = proc.subclase || 'N/A';
             const ubicacion = proc.ubicacion || 'N/A';
-            const fecha = formateaFecha(proc.fechaUltimaActuacion); // Use helper for formatting
+            const fecha = normalizaFecha(proc.fechaUltimaActuacion); // Use helper for formatting
 
             const row = document.createElement('tr');
             row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
@@ -775,6 +811,78 @@
             .replace(/>/g, '>')
             .replace(/"/g, '"')
             .replace(/'/g, '&#039;');
+    }
+
+    // Normalize date values for table display.
+    // Accepts:
+    //  - DD/MM/YYYY -> returned as-is
+    //  - YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ -> converted to DD/MM/YYYY
+    //  - null/empty -> 'N/A'
+    function normalizaFecha(value) {
+        if (value === null || value === undefined) return 'N/A';
+        if (typeof value !== 'string') value = String(value);
+
+        const v = value.trim();
+        if (!v) return 'N/A';
+
+        // Already DD/MM/YYYY
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(v)) return v;
+
+        // YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS...
+        const isoDateMatch = v.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+        if (isoDateMatch) {
+            const yyyy = isoDateMatch[1];
+            const mm = isoDateMatch[2];
+            const dd = isoDateMatch[3];
+            return `${dd}/${mm}/${yyyy}`;
+        }
+
+        // Fallback: try Date parser
+        try {
+            const d = new Date(v);
+            if (isNaN(d.getTime())) return 'N/A';
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const yyyy = d.getFullYear();
+            return `${dd}/${mm}/${yyyy}`;
+        } catch (e) {
+            return 'N/A';
+        }
+    }
+
+    // Normalize a backend row into the exact table-facing keys required:
+    // { radicado, idProceso, demandante, demandado, juzgado, clase, subclase, ubicacion, fechaUltimaActuacion, status, error?, _raw? }
+    function normalizaRowParaTabla(row) {
+        if (!row || typeof row !== 'object') return {
+            radicado: '',
+            idProceso: '',
+            demandante: '',
+            demandado: '',
+            juzgado: '',
+            clase: '',
+            subclase: '',
+            ubicacion: '',
+            fechaUltimaActuacion: null,
+            status: '',
+            error: '',
+            _raw: null
+        };
+
+        return {
+            radicado: row.radicado || '',
+            idProceso: row.idProceso || '',
+            demandante: row.demandante || '',
+            demandado: row.demandado || '',
+            juzgado: row.juzgado || '',
+            clase: row.clase || '',
+            subclase: row.subclase || '',
+            ubicacion: row.ubicacion || '',
+            // Keep original raw date string; rendering layer will call normalizaFecha()
+            fechaUltimaActuacion: row.fechaUltimaActuacion || null,
+            status: row.status || '',
+            error: row.error || '',
+            _raw: row._raw || null
+        };
     }
 
     // Helper to format date to DD/MM/YYYY (defensive: avoids NaN/NaN/NaN)
