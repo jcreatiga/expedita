@@ -277,7 +277,7 @@
         const password = document.getElementById('login-password').value;
 
         if (!email || !password) {
-            alert('Por favor completa todos los campos');
+            toast.error('Por favor completa todos los campos');
             return;
         }
 
@@ -296,10 +296,10 @@
                 showApp();
                 await loadUserInfo();
             } else {
-                alert(data.detail || 'Error en el inicio de sesión');
+                toast.error(data.detail || 'Error en el inicio de sesión');
             }
         } catch (error) {
-            alert('Error de conexión');
+            toast.error('Error de conexión');
         }
     }
 
@@ -309,7 +309,7 @@
         const password = document.getElementById('login-password').value;
 
         if (!email || !password) {
-            alert('Por favor completa todos los campos');
+            toast.error('Por favor completa todos los campos');
             return;
         }
 
@@ -326,16 +326,16 @@
                 showApp();
                 await loadUserInfo();
             } else {
-                alert(data.detail || 'Error en el registro');
+                toast.error(data.detail || 'Error en el registro');
             }
         } catch (err) {
-            alert('Error de conexión');
+            toast.error('Error de conexión');
         }
     }
 
-    function showRegister(){
+    async function showRegister(){
         // open register: reuse login inputs but call register instead
-        if (confirm('Registrar con los datos ingresados en el formulario?')) {
+        if (await modalConfirm('Registrar con los datos ingresados en el formulario?')) {
             register();
         }
     }
@@ -384,12 +384,12 @@
     async function batchQuery() {
         const raw = document.getElementById('batch-numbers').value.trim();
         if (!raw) {
-            alert('Por favor ingresa al menos un número de radicación');
+            toast.error('Por favor ingresa al menos un número de radicación');
             return;
         }
         const numbers = raw.split(',').map(n => n.trim()).filter(n => n);
         if (numbers.length > 10) {
-            alert('Máximo 10 procesos por consulta');
+            toast.error('Máximo 10 procesos por consulta');
             return;
         }
 
@@ -585,7 +585,8 @@
                             <th scope="col" onclick="sortTable('clase')" style="cursor:pointer;" aria-sort="none">Clase</th>
                             <th scope="col" onclick="sortTable('subclase')" style="cursor:pointer;" aria-sort="none">Subclase</th>
                             <th scope="col" onclick="sortTable('ubicacion')" style="cursor:pointer;" aria-sort="none">Ubicación</th>
-                            <th scope="col">Acciones</th>
+                            <th scope="col">Última actuación</th>
+                            <th scope="col">Guardar</th>
                         </tr>
                     </thead>
                     <tbody id="results-tbody">
@@ -765,7 +766,7 @@
     async function saveProcess(btn, radicado, procString) {
         if (!authToken) {
             // If not authenticated, show login
-            alert('Debes iniciar sesión para guardar procesos.');
+            toast.error('Debes iniciar sesión para guardar procesos.');
             showAuth();
             return;
         }
@@ -810,7 +811,7 @@
 
             if (resp.ok && data && data.status === 'OK') {
                 // success toast
-                alert('Guardado');
+                toast.success('Guardado');
                 // visually mark saved row: find the closest <tr> and add a green check near radicado
                 try {
                     const row = btn ? btn.closest('tr') : null;
@@ -839,14 +840,14 @@
             } else {
                 // show backend message for 503 or other errors
                 if (resp.status === 503) {
-                    alert(data?.detail || 'No se puede guardar ahora');
+                    toast.error(data?.detail || 'No se puede guardar ahora');
                 } else {
-                    alert(data?.detail || JSON.stringify(data) || 'No se pudo guardar el proceso');
+                    toast.error(data?.detail || JSON.stringify(data) || 'No se pudo guardar el proceso');
                 }
             }
         } catch (err) {
             console.error('saveProcess error:', err);
-            alert(err?.message || 'Error guardando proceso (ver consola).');
+            toast.error(err?.message || 'Error guardando proceso (ver consola).');
         } finally {
             if (btn && typeof btn.removeAttribute === 'function') {
                 btn.removeAttribute('disabled');
@@ -977,12 +978,12 @@
             const response = await fetch('/api-test');
             const data = await response.json();
             if(response.ok && data.status === 'success'){
-                alert('Conexión API exitosa');
+                toast.success('Conexión API exitosa');
             } else {
-                alert('Error al conectar con la API');
+                toast.error('Error al conectar con la API');
             }
         } catch(err){
-            alert('Error de conexión');
+            toast.error('Error de conexión');
         }
     }
 
@@ -1050,7 +1051,7 @@
 
             if (!resp.ok) {
                 if (resp.status === 503) {
-                    alert(data?.detail || 'No se puede acceder a procesos guardados ahora');
+                    toast.error(data?.detail || 'No se puede acceder a procesos guardados ahora');
                     container.innerHTML = `<div class="table-error">${data?.detail || 'No se puede acceder a procesos guardados ahora'}</div>`;
                     return;
                 }
@@ -1104,7 +1105,7 @@
                                 <th scope="col">Ubicación</th>
                                 <th scope="col">Fecha Última Actuación</th>
                                 <th scope="col">Actualizado el</th>
-                                <th scope="col">Acciones</th>
+                                <th scope="col">Opciones</th>
                             </tr>
                         </thead>
                         <tbody id="results-tbody">
@@ -1137,7 +1138,7 @@
                     <td class="px-6 py-4 text-sm text-secondary-text-light" data-col="updatedAt">${escapeHtml(updated)}</td>
                     <td class="px-6 py-4 text-right">
                         <button class="mr-2 px-3 py-1 bg-primary text-white rounded text-sm" onclick="refreshSavedSingle('${id}')">Actualizar</button>
-                        <button class="px-3 py-1 bg-red-600 text-white rounded text-sm" onclick="deleteSaved('${id}', this)">Eliminar</button>
+                        <button class="px-3 py-1 bg-red-600 text-white rounded text-sm" onclick="(async () => await deleteSaved('${id}', this))()">Eliminar</button>
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -1147,14 +1148,14 @@
             document.getElementById('btn-refresh-selected').addEventListener('click', async () => {
                 const checked = Array.from(document.querySelectorAll('.saved-checkbox:checked')).map(cb => cb.dataset.id).filter(Boolean);
                 if (checked.length === 0) {
-                    if (!confirm('No hay procesos seleccionados. ¿Deseas actualizar todos?')) return;
+                    if (!(await modalConfirm('No hay procesos seleccionados. ¿Deseas actualizar todos?'))) return;
                     await refreshSaved(); // refresh all
                 } else {
                     await refreshSaved(checked);
                 }
             });
             document.getElementById('btn-refresh-all').addEventListener('click', async () => {
-                if (!confirm('Actualizar todos los procesos guardados?')) return;
+                if (!(await modalConfirm('Actualizar todos los procesos guardados?'))) return;
                 await refreshSaved(); // no ids -> refresh all
             });
 
@@ -1168,7 +1169,7 @@
         } catch(err){
             const container = document.getElementById('query-result');
             console.error('Error de conexión al cargar procesos guardados:', err);
-            alert('Error de conexión al cargar procesos guardados.');
+            toast.error('Error de conexión al cargar procesos guardados.');
             container.innerHTML = `<div class="table-error">Error de conexión al cargar procesos guardados.</div>`;
         }
     }
@@ -1191,11 +1192,11 @@
             const data = await resp.json();
             if (!resp.ok) {
                 if (resp.status === 503) {
-                    alert(data?.detail || 'No se puede actualizar ahora');
+                    toast.error(data?.detail || 'No se puede actualizar ahora');
                     progressEl.textContent = '';
                     return;
                 }
-                alert(data?.detail || 'Error al actualizar procesos');
+                toast.error(data?.detail || 'Error al actualizar procesos');
                 progressEl.textContent = '';
                 return;
             }
@@ -1225,18 +1226,18 @@
                                 }
                             }
                         }
-                        // show simple alert summarizing changes
+                        // show simple toast summarizing changes
                         try {
-                            const summary = change.changedFields.map(f => `${f}: ${JSON.stringify(change.before?.[f])} → ${JSON.stringify(change.after?.[f])}`).join('\n');
-                            alert(`Cambios detectados para ${change.id || change.savedId || 'id desconocido'}:\n${summary}`);
+                            const summary = change.changedFields.map(f => `${f}: ${JSON.stringify(change.before?.[f])} → ${JSON.stringify(change.after?.[f])}`).join('; ');
+                            toast.info(`Cambios detectados para ${change.id || change.savedId || 'id desconocido'}: ${summary}`);
                         } catch (e) {
-                            console.warn('Could not build summary alert', e);
+                            console.warn('Could not build summary toast', e);
                         }
                     }
                 }
             } else {
                 // If server returned an object with diffs per id
-                alert('Actualización completada');
+                toast.success('Actualización completada');
             }
 
             // After refresh, reload saved list to reflect updated snapshots/updatedAt
@@ -1244,7 +1245,7 @@
             progressEl.textContent = '';
         } catch (err) {
             console.error('Error refreshing saved processes:', err);
-            alert('Error de conexión al actualizar procesos guardados.');
+            toast.error('Error de conexión al actualizar procesos guardados.');
             const progressEl2 = document.getElementById('progressStatus');
             if (progressEl2) progressEl2.textContent = '';
         }
@@ -1259,7 +1260,7 @@
     // Delete saved process
     async function deleteSaved(id, btn) {
         if (!id) return;
-        if (!confirm('¿Eliminar proceso guardado?')) return;
+        if (!(await modalConfirm('¿Eliminar proceso guardado?'))) return;
         if (!authToken) { showAuth(); return; }
         try {
             const resp = await fetch(`/api/saved/${id}`, {
@@ -1271,17 +1272,17 @@
                 // remove row from UI
                 const tr = document.querySelector(`tr[data-saved-id="${id}"]`);
                 if (tr && tr.parentElement) tr.parentElement.removeChild(tr);
-                alert('Eliminado');
+                toast.success('Eliminado');
             } else {
                 if (resp.status === 503) {
-                    alert(data?.detail || 'No se puede eliminar ahora');
+                    toast.error(data?.detail || 'No se puede eliminar ahora');
                 } else {
-                    alert(data?.detail || JSON.stringify(data) || 'Error eliminando');
+                    toast.error(data?.detail || JSON.stringify(data) || 'Error eliminando');
                 }
             }
         } catch (err) {
             console.error('deleteSaved error:', err);
-            alert('Error de conexión al eliminar proceso guardado.');
+            toast.error('Error de conexión al eliminar proceso guardado.');
         }
     }
 
@@ -1314,7 +1315,74 @@
             console.error('Error de conexión al cargar logs:', e);
         }
     }
+
+    // Toast system
+    const toast = {
+        container: null,
+        init() {
+            this.container = document.createElement('div');
+            this.container.id = 'toast-container';
+            this.container.className = 'fixed top-4 right-4 z-50 space-y-2';
+            document.body.appendChild(this.container);
+        },
+        show(message, type = 'info') {
+            if (!this.container) this.init();
+            const toastEl = document.createElement('div');
+            toastEl.className = `p-4 rounded-lg shadow-lg text-white transition-opacity duration-300 ${
+                type === 'success' ? 'bg-green-500' :
+                type === 'error' ? 'bg-red-500' :
+                'bg-blue-500'
+            }`;
+            toastEl.setAttribute('role', 'alert');
+            toastEl.setAttribute('aria-live', 'assertive');
+            toastEl.textContent = message;
+            this.container.appendChild(toastEl);
+            setTimeout(() => {
+                toastEl.style.opacity = '0';
+                setTimeout(() => toastEl.remove(), 300);
+            }, 3000);
+        },
+        success(message) { this.show(message, 'success'); },
+        error(message) { this.show(message, 'error'); },
+        info(message) { this.show(message, 'info'); }
+    };
+
+    // Modal confirmation system
+    let modalResolve;
+    function modalConfirm(message) {
+        return new Promise((resolve) => {
+            modalResolve = resolve;
+            document.getElementById('modal-message').textContent = message;
+            document.getElementById('modal-overlay').classList.remove('hidden');
+            document.getElementById('modal-confirm').focus();
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        toast.init();
+        document.getElementById('modal-confirm').addEventListener('click', () => {
+            document.getElementById('modal-overlay').classList.add('hidden');
+            modalResolve(true);
+        });
+        document.getElementById('modal-cancel').addEventListener('click', () => {
+            document.getElementById('modal-overlay').classList.add('hidden');
+            modalResolve(false);
+        });
+    });
 </script>
+
+<!-- Toast and Modal Containers -->
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<div id="modal-overlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="modal-message">
+    <div id="modal-content" class="bg-panel-light dark:bg-panel-dark p-6 rounded-lg shadow-lg max-w-md w-full mx-4 text-text-light dark:text-text-dark">
+        <p id="modal-message" class="mb-4"></p>
+        <div class="flex justify-end gap-4">
+            <button id="modal-cancel" class="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-text-light dark:text-text-dark rounded hover:bg-gray-400 dark:hover:bg-gray-500 transition">Cancelar</button>
+            <button id="modal-confirm" class="px-4 py-2 bg-primary text-white rounded hover:bg-opacity-90 transition">Confirmar</button>
+        </div>
+    </div>
+</div>
 
 </body>
 </html>
