@@ -110,19 +110,117 @@ button.danger:hover { filter:brightness(0.95); }
 }
 .tab-button.active { background: linear-gradient(90deg,var(--primary), #0062d6); color:white; box-shadow: 0 4px 14px rgba(0,123,255,0.18); }
 
-/* Tables: more breathing room, bigger fonts and taller rows for readability */
-table { width: 100%; border-collapse: collapse; margin-top: 18px; background: transparent; }
-th, td { padding: 16px 20px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; font-size: 15px; }
-th { background: rgba(255,255,255,0.02); font-weight:700; color:var(--muted); letter-spacing: 0.02em; }
+/* Table container: full width, centered, with overflow-x-auto for mobile */
+.table-container {
+    max-width: 1280px;
+    width: 100%;
+    margin: 0 auto;
+    overflow-x: auto;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    background: linear-gradient(180deg, #111316, #1e1f23);
+    border: 1px solid #2a2d33;
+}
 
-/* Make the results container occupy more horizontal space and avoid "compressed" feeling */
-#results-table { min-width: 900px; }
+/* Tables: full width, auto layout, min-width to prevent squishing */
+table {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    margin: 0;
+    background: transparent;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+/* Table headers: sticky, with backdrop blur */
+th {
+    position: sticky;
+    top: 0;
+    background: rgba(30,31,35,0.95);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 16px 20px;
+    text-align: left;
+    font-weight: 700;
+    color: #e6e7eb;
+    letter-spacing: 0.02em;
+    border-bottom: 2px solid #2a2d33;
+    z-index: 10;
+}
+
+/* Table cells: better padding, min-height for touch targets */
+td {
+    padding: 16px 20px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    vertical-align: middle;
+    min-height: 44px;
+    color: #e6e7eb;
+}
+
+/* Zebra striping for rows */
+tbody tr:nth-child(even) {
+    background: rgba(255,255,255,0.02);
+}
+
+/* Hover state for rows */
+tbody tr:hover {
+    background: rgba(255,255,255,0.04);
+    transition: background-color 0.15s ease;
+}
 
 /* Improve truncated cell look and spacing */
-.truncate-cell { max-width: 280px; padding-right: 8px; }
+.truncate-cell {
+    max-width: 280px;
+    padding-right: 8px;
+}
 
-/* Increase row hover area and subtle elevation */
-tr:hover { transform: translateY(-2px); transition: transform 0.12s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+/* Empty state styling */
+.table-empty {
+    padding: 48px 24px;
+    text-align: center;
+    color: #aeb3bb;
+    font-size: 16px;
+}
+
+/* Loading state */
+.table-loading {
+    padding: 48px 24px;
+    text-align: center;
+    color: #aeb3bb;
+    font-size: 16px;
+}
+
+/* Error state */
+.table-error {
+    padding: 48px 24px;
+    text-align: center;
+    color: #ff6b6b;
+    font-size: 16px;
+}
+
+/* Responsive: on mobile, reduce padding slightly */
+@media (max-width: 768px) {
+    .table-container {
+        border-radius: 12px;
+        margin: 0 8px;
+    }
+    th, td {
+        padding: 12px 16px;
+        font-size: 13px;
+    }
+    .truncate-cell {
+        max-width: 200px;
+    }
+}
+
+/* Accessibility: ensure sufficient contrast */
+@media (prefers-contrast: high) {
+    th { background: #1e1f23; color: #ffffff; }
+    td { color: #ffffff; }
+    .table-empty, .table-loading { color: #ffffff; }
+}
 
 .highlight-today { background-color: rgba(40,167,69,0.08) !important; border-left: 4px solid var(--success); }
 .error { color: #ff6b6b; }

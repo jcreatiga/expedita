@@ -539,43 +539,100 @@
 
     // Store last results for sorting / re-render
     let lastResults = [];
+    let allResults = [];
+    let filteredResults = [];
+    let currentPage = 1;
+    let pageSize = 25;
 
     function renderResultsTable(results) {
         const container = document.getElementById('query-result');
         if (!results || results.length === 0) {
-            container.innerHTML = '<div class="table-empty p-6">No hay resultados.</div>';
+            container.innerHTML = '<div class="table-empty">No hay resultados.</div>';
             return;
         }
 
-        // Table header with sortable columns
-        const html = `
-            <div class="bg-panel-light dark:bg-panel-dark rounded-lg shadow-md overflow-hidden">
-                <div class="overflow-x-auto">
-                    <table id="results-table" class="w-full text-sm text-left text-secondary-text-light dark:text-secondary-text-dark table-auto">
-                        <thead class="text-xs text-text-light dark:text-text-dark uppercase bg-background-light dark:bg-background-dark">
-                            <tr>
-                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('numero')">Radicado</th>
-                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('demandante')">Demandante</th>
-                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('demandado')">Demandado</th>
-                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('despacho')">Juzgado</th>
-                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('clase_proceso')">Clase</th>
-                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('ubicacion')">Ubicación</th>
-                                <th class="px-6 py-3 cursor-pointer" onclick="sortTable('fecha_ultima_actuacion')">Fecha Última Actuación</th>
-                                <th class="px-6 py-3">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody id="results-tbody">
-                        </tbody>
-                    </table>
+        // Controls for filter and pagination
+        const controlsHtml = `
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                <div class="flex items-center gap-4">
+                    <label for="table-filter" class="text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark">Filtrar:</label>
+                    <input id="table-filter" type="text" placeholder="Buscar en resultados..." class="px-3 py-2 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:ring-primary focus:border-primary" oninput="filterTable()">
+                </div>
+                <div class="flex items-center gap-4">
+                    <label for="table-page-size" class="text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark">Mostrar:</label>
+                    <select id="table-page-size" class="px-3 py-2 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:ring-primary focus:border-primary" onchange="changePageSize()">
+                        <option value="10">10</option>
+                        <option value="25" selected>25</option>
+                        <option value="50">50</option>
+                    </select>
                 </div>
             </div>
         `;
-        container.innerHTML = html;
 
-        // Populate rows
+        // Table with improved container and accessibility
+        const tableHtml = `
+            <div class="table-container">
+                <table id="results-table" role="table" aria-label="Resultados de consulta de procesos judiciales">
+                    <thead>
+                        <tr>
+                            <th scope="col" onclick="sortTable('numero')" style="cursor:pointer;" aria-sort="none">Radicado</th>
+                            <th scope="col" onclick="sortTable('demandante')" style="cursor:pointer;" aria-sort="none">Demandante</th>
+                            <th scope="col" onclick="sortTable('demandado')" style="cursor:pointer;" aria-sort="none">Demandado</th>
+                            <th scope="col" onclick="sortTable('despacho')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
+                            <th scope="col" onclick="sortTable('clase_proceso')" style="cursor:pointer;" aria-sort="none">Clase</th>
+                            <th scope="col" onclick="sortTable('ubicacion')" style="cursor:pointer;" aria-sort="none">Ubicación</th>
+                            <th scope="col" onclick="sortTable('fecha_ultima_actuacion')" style="cursor:pointer;" aria-sort="none">Fecha Última Actuación</th>
+                            <th scope="col">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-tbody">
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        container.innerHTML = controlsHtml + tableHtml;
+
+        // Initialize pagination and filtering
+        allResults = [...results];
+        filteredResults = [...results];
+        currentPage = 1;
+        pageSize = parseInt(document.getElementById('table-page-size').value) || 25;
+        renderTablePage();
+    }
+
+    // Filter table based on input
+    function filterTable() {
+        const filterValue = document.getElementById('table-filter').value.toLowerCase();
+        filteredResults = allResults.filter(proc =>
+            (proc.numero || '').toLowerCase().includes(filterValue) ||
+            (proc.demandante || '').toLowerCase().includes(filterValue) ||
+            (proc.demandado || '').toLowerCase().includes(filterValue) ||
+            (proc.despacho || '').toLowerCase().includes(filterValue) ||
+            (proc.clase_proceso || '').toLowerCase().includes(filterValue) ||
+            (proc.ubicacion || '').toLowerCase().includes(filterValue)
+        );
+        currentPage = 1;
+        renderTablePage();
+    }
+
+    // Change page size
+    function changePageSize() {
+        pageSize = parseInt(document.getElementById('table-page-size').value);
+        currentPage = 1;
+        renderTablePage();
+    }
+
+    // Render current page of results
+    function renderTablePage() {
         const tbody = document.getElementById('results-tbody');
         tbody.innerHTML = '';
-        results.forEach(proc => {
+
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        const pageResults = filteredResults.slice(startIndex, endIndex);
+
+        pageResults.forEach(proc => {
             const fecha = proc.fecha_ultima_actuacion ? (new Date(proc.fecha_ultima_actuacion)).toLocaleDateString('es-CO') : 'N/A';
             const demandante = proc.demandante || 'N/A';
             const demandado = proc.demandado || 'N/A';
@@ -587,7 +644,6 @@
             row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
 
             // Safely build the row HTML and pass the proc JSON as an encoded string argument
-            // encodeURIComponent produces no single quotes, so we can safely wrap in single quotes
             const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
                 <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row">${proc.numero}</th>
@@ -606,6 +662,39 @@
             `;
             tbody.appendChild(row);
         });
+
+        // Add pagination controls if needed
+        const totalPages = Math.ceil(filteredResults.length / pageSize);
+        if (totalPages > 1) {
+            const paginationHtml = `
+                <div class="flex justify-center items-center gap-2 mt-4">
+                    <button onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''} class="px-3 py-1 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded text-sm">Anterior</button>
+                    <span class="text-sm text-secondary-text-light dark:text-secondary-text-dark">Página ${currentPage} de ${totalPages}</span>
+                    <button onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''} class="px-3 py-1 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded text-sm">Siguiente</button>
+                </div>
+            `;
+            const existingPagination = document.getElementById('pagination-controls');
+            if (existingPagination) {
+                existingPagination.innerHTML = paginationHtml;
+            } else {
+                const paginationDiv = document.createElement('div');
+                paginationDiv.id = 'pagination-controls';
+                paginationDiv.innerHTML = paginationHtml;
+                tbody.parentElement.parentElement.appendChild(paginationDiv);
+            }
+        } else {
+            const existingPagination = document.getElementById('pagination-controls');
+            if (existingPagination) existingPagination.innerHTML = '';
+        }
+    }
+
+    // Change page
+    function changePage(page) {
+        const totalPages = Math.ceil(filteredResults.length / pageSize);
+        if (page >= 1 && page <= totalPages) {
+            currentPage = page;
+            renderTablePage();
+        }
     }
 
     function displayBatchResults(results){
