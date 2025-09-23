@@ -698,34 +698,43 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
         if not isinstance(result, dict) or not result.get("success"):
             return {"status": "error", "detail": result.get("error", "Unknown error"), "raw": result}
     
-        # Build the processed_result object (same shape as batch output)
+        # Build the processed_result object in the canonical ProcesoRow shape required by the frontend
+        # Keys required: radicado, idProceso, demandante, demandado, juzgado, clase, subclase, ubicacion, fechaUltimaActuacion, status
+        def _safe_iso_date(val):
+            if isinstance(val, (datetime.date, datetime.datetime)):
+                return val.isoformat()
+            try:
+                if isinstance(val, str) and val.strip():
+                    # Try parsing common ISO formats
+                    parsed = datetime.datetime.fromisoformat(val)
+                    return parsed.date().isoformat()
+            except Exception:
+                pass
+            return None
+    
         processed_result = {
-            "numero": result.get("numero"),
-            "fecha_ultima_actuacion": result.get("fecha_ultima_actuacion").isoformat() if isinstance(result.get("fecha_ultima_actuacion"), (datetime.date, datetime.datetime)) else result.get("fecha_ultima_actuacion"),
-            "despacho": result.get("despacho"),
-            "departamento": result.get("departamento"),
-            "demandante": result.get("demandante"),
-            "demandado": result.get("demandado"),
-            "id_proceso": result.get("id_proceso"),
-            "is_today": False,
-            "tipo_proceso": result.get("tipo_proceso", ""),
-            "clase_proceso": result.get("clase_proceso", ""),
-            "subclase_proceso": result.get("subclase_proceso", ""),
-            "recurso": result.get("recurso", ""),
-            "ponente": result.get("ponente", ""),
-            "ubicacion": result.get("ubicacion", "")
+            "radicado": result.get("numero"),
+            "idProceso": result.get("id_proceso") or None,
+            "demandante": result.get("demandante") or '',
+            "demandado": result.get("demandado") or '',
+            "juzgado": result.get("despacho") or '',
+            "clase": result.get("clase_proceso") or '',
+            "subclase": result.get("subclase_proceso") or '',
+            "ubicacion": result.get("ubicacion") or '',
+            "fechaUltimaActuacion": _safe_iso_date(result.get("fecha_ultima_actuacion")),
+            "status": "success"
         }
     
         # Persist to user's saved processes table so the frontend can use /processes/my-processes later
         if db:
             try:
-                existing = db.query(UserProcess).filter_by(user_id=current_user.id, numero=processed_result["numero"]).first()
+                existing = db.query(UserProcess).filter_by(user_id=current_user.id, numero=processed_result["radicado"]).first()
                 if existing:
-                    existing.id_proceso = processed_result.get("id_proceso") or existing.id_proceso
+                    existing.id_proceso = processed_result.get("idProceso") or existing.id_proceso
                     existing.response_json = result.get("response_json") or existing.response_json
                     existing.detalle_json = result.get("detalle_json") or existing.detalle_json
                     # fecha_ultima_actuacion may be string or date - attempt to convert
-                    fecha_val = processed_result.get("fecha_ultima_actuacion")
+                    fecha_val = processed_result.get("fechaUltimaActuacion")
                     if fecha_val:
                         try:
                             existing.fecha_ultima_actuacion = datetime.datetime.fromisoformat(fecha_val).date()
@@ -734,45 +743,45 @@ async def process_single_judicial_query(numero: str, db=None, user_id=None, ip_a
                                 existing.fecha_ultima_actuacion = datetime.datetime.strptime(fecha_val, "%Y-%m-%d").date()
                             except:
                                 pass
-                    existing.despacho = processed_result.get("despacho") or existing.despacho
-                    existing.departamento = processed_result.get("departamento") or existing.departamento
+                    existing.despacho = processed_result.get("juzgado") or existing.despacho
+                    existing.departamento = result.get("departamento") or existing.departamento
                     existing.demandante = processed_result.get("demandante") or existing.demandante
                     existing.demandado = processed_result.get("demandado") or existing.demandado
-                    existing.tipo_proceso = processed_result.get("tipo_proceso") or existing.tipo_proceso
-                    existing.clase_proceso = processed_result.get("clase_proceso") or existing.clase_proceso
-                    existing.subclase_proceso = processed_result.get("subclase_proceso") or existing.subclase_proceso
-                    existing.recurso = processed_result.get("recurso") or existing.recurso
-                    existing.ponente = processed_result.get("ponente") or existing.ponente
+                    existing.tipo_proceso = result.get("tipo_proceso") or existing.tipo_proceso
+                    existing.clase_proceso = processed_result.get("clase") or existing.clase_proceso
+                    existing.subclase_proceso = processed_result.get("subclase") or existing.subclase_proceso
+                    existing.recurso = result.get("recurso") or existing.recurso
+                    existing.ponente = result.get("ponente") or existing.ponente
                     existing.ubicacion = processed_result.get("ubicacion") or existing.ubicacion
                     existing.updated_at = datetime.datetime.utcnow()
                     db.commit()
                 else:
                     user_process = UserProcess(
                         user_id=current_user.id,
-                        numero=processed_result.get("numero"),
-                        id_proceso=processed_result.get("id_proceso"),
+                        numero=processed_result.get("radicado"),
+                        id_proceso=processed_result.get("idProceso"),
                         response_json=result.get("response_json"),
                         detalle_json=result.get("detalle_json"),
-                        fecha_ultima_actuacion=(datetime.datetime.fromisoformat(processed_result["fecha_ultima_actuacion"]).date()
-                                                if processed_result.get("fecha_ultima_actuacion") else None),
-                        despacho=processed_result.get("despacho"),
-                        departamento=processed_result.get("departamento"),
+                        fecha_ultima_actuacion=(datetime.datetime.fromisoformat(processed_result["fechaUltimaActuacion"]).date()
+                                                if processed_result.get("fechaUltimaActuacion") else None),
+                        despacho=processed_result.get("juzgado"),
+                        departamento=result.get("departamento"),
                         demandante=processed_result.get("demandante"),
                         demandado=processed_result.get("demandado"),
-                        tipo_proceso=processed_result.get("tipo_proceso"),
-                        clase_proceso=processed_result.get("clase_proceso"),
-                        subclase_proceso=processed_result.get("subclase_proceso"),
-                        recurso=processed_result.get("recurso"),
-                        ponente=processed_result.get("ponente"),
+                        tipo_proceso=result.get("tipo_proceso"),
+                        clase_proceso=processed_result.get("clase"),
+                        subclase_proceso=processed_result.get("subclase"),
+                        recurso=result.get("recurso"),
+                        ponente=result.get("ponente"),
                         ubicacion=processed_result.get("ubicacion")
                     )
                     db.add(user_process)
                     db.commit()
             except Exception as db_err:
-                print(f"DEBUG: Failed to persist single-query result for {numero}: {db_err}")
+                print(f"DEBUG: Failed to persist single-query result for {processed_result.get('radicado')}: {db_err}")
     
+        # Return canonical ProcesoRow shape for frontend compatibility
         return {"status": "success", "result": processed_result}
-    
     # Batch processing endpoint
 @app.post("/processes/batch-query")
 @limiter.limit("50/hour")  # Rate limit: 50 requests per hour
@@ -933,6 +942,82 @@ async def batch_query_processes(
 
     print(f"DEBUG: Batch query completed. Returning {len(processed_results)} results and {len(errors)} errors")
     return {"results": processed_results, "total_processed": len(processed_results), "errors": errors}
+    
+# New public batch API (mirror) - accepts ?q=rad1,rad2,...
+@app.get("/api/procesos")
+async def api_procesos(q: str = None, request: Request = None):
+    """
+    Public batch endpoint that returns an array of ProcesoRow objects.
+    Query param: q (comma-separated radicados)
+    Returns JSON: { results: [ { radicado, idProceso, demandante, demandado, juzgado, clase, subclase, ubicacion, fechaUltimaActuacion, status }, ... ] }
+    """
+    client_ip = request.client.host if request and request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "") if request else ""
+    if not q:
+        raise HTTPException(status_code=400, detail="Missing 'q' query parameter with comma-separated radicados")
+    
+    nums = [n.strip() for n in q.split(",") if n.strip()]
+    if not nums:
+        raise HTTPException(status_code=400, detail="No valid radicados provided in 'q'")
+
+    if len(nums) > 20:
+        # protect the public API from very large requests
+        raise HTTPException(status_code=400, detail="Maximum 20 procesos per request")
+
+    results = []
+    for numero in nums:
+        # Basic validation: keep calling helper even for invalid formatting so it returns errors consistently
+        try:
+            res = await process_single_judicial_query(numero, db=None, user_id=None, ip_address=client_ip, user_agent=user_agent)
+        except Exception as e:
+            res = {"error": str(e), "numero": numero, "success": False}
+
+        # Normalize to canonical ProcesoRow shape
+        def _safe_iso_date(val):
+            if isinstance(val, (datetime.date, datetime.datetime)):
+                return val.isoformat()
+            try:
+                if isinstance(val, str) and val.strip():
+                    parsed = datetime.datetime.fromisoformat(val)
+                    return parsed.date().isoformat()
+            except Exception:
+                pass
+            return None
+
+        if res.get("success"):
+            proc = {
+                "radicado": res.get("numero"),
+                "idProceso": res.get("id_proceso") or None,
+                "demandante": res.get("demandante") or '',
+                "demandado": res.get("demandado") or '',
+                "juzgado": res.get("despacho") or '',
+                "clase": res.get("clase_proceso") or '',
+                "subclase": res.get("subclase_proceso") or '',
+                "ubicacion": res.get("ubicacion") or '',
+                "fechaUltimaActuacion": _safe_iso_date(res.get("fecha_ultima_actuacion")),
+                "status": "success",
+                "_raw": {
+                    "consulta": res.get("response_json"),
+                    "detalle": res.get("detalle_json")
+                }
+            }
+        else:
+            proc = {
+                "radicado": res.get("numero") or numero,
+                "idProceso": None,
+                "demandante": '',
+                "demandado": '',
+                "juzgado": '',
+                "clase": '',
+                "subclase": '',
+                "ubicacion": '',
+                "fechaUltimaActuacion": None,
+                "status": "error",
+                "error": res.get("error") or res.get("detail") or "No data"
+            }
+        results.append(proc)
+
+    return {"results": results, "total": len(results)}
 
 # API endpoint: save a single process for the current user
 @app.post("/processes/save")

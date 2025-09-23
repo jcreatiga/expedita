@@ -381,7 +381,7 @@
         }
     }
 
-    // Batch query (now calls single-query per radicado to enable progress updates)
+    // Batch query (tries public batch endpoint first, falls back to per-radicado calls)
     async function batchQuery() {
         const raw = document.getElementById('batch-numbers').value.trim();
         if (!raw) {
@@ -393,7 +393,7 @@
             alert('Máximo 10 procesos por consulta');
             return;
         }
-
+    
         // Validate and normalize
         const validNumbers = [];
         for (const num of numbers) {
@@ -404,12 +404,12 @@
                 validNumbers.push(num);
             }
         }
-
+    
         if (validNumbers.length === 0) {
             alert('No hay números válidos para consultar.');
             return;
         }
-
+    
         // Show progress UI
         const progressContainer = document.getElementById('query-progress');
         const progressText = document.getElementById('progress-text');
@@ -419,105 +419,89 @@
         progressBar.style.width = '0%';
         progressText.textContent = `0 de ${validNumbers.length} procesos consultados`;
         progressStatus.textContent = 'Iniciando consultas...';
-
+    
         // Ensure debug panel is visible and cleared
         const debugPanel = document.getElementById('debug-panel');
         if (debugPanel) {
             debugPanel.classList.remove('hidden');
             debugPanel.innerHTML = '<h3 class="text-sm font-medium mb-2 text-secondary-text-light dark:text-secondary-text-dark">Debug responses (most recent arriba)</h3>';
         }
-
-        lastResults = [];
-        // Use Promise.allSettled for parallel fetching
-        const promises = validNumbers.map(async (numero, i) => {
-            progressStatus.textContent = `Consultando ${i + 1} de ${validNumbers.length}: ${numero}`;
-            try {
-                const resp = await fetch(`/processes/single-query/${encodeURIComponent(numero)}`, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                const data = await resp.json();
-
-                // Append raw response to debug panel
-                if (debugPanel) {
-                    const entry = document.createElement('div');
-                    entry.style.whiteSpace = 'pre-wrap';
-                    entry.style.fontSize = '12px';
-                    entry.style.padding = '8px';
-                    entry.style.marginBottom = '8px';
-                    entry.style.background = 'rgba(255,255,255,0.02)';
-                    entry.style.borderRadius = '6px';
-                    entry.style.color = '#cbd5e1';
-                    entry.innerText = `[${new Date().toLocaleTimeString()}] ${numero} -> ${JSON.stringify(data, null, 2)}`;
-                    debugPanel.insertBefore(entry, debugPanel.children[1] || null);
-                }
-
-                if (resp.ok && data.status === 'success' && data.result) {
-                    return data.result;
-                } else {
-                    const errDetail = (data && (data.detail || data.raw || data.error)) || 'Error desconocido';
-                    console.warn(`Consulta fallida para ${numero}:`, errDetail);
-                    return {
-                        radicado: numero,
-                        idProceso: null,
-                        demandante: 'N/A',
-                        demandado: 'N/A',
-                        juzgado: 'N/A',
-                        clase: 'N/A',
-                        subclase: 'N/A',
-                        ubicacion: 'N/A',
-                        fechaUltimaActuacion: 'N/A',
-                        error: String(errDetail)
-                    };
-                }
-            } catch (err) {
-                console.error(`Error consultando ${numero}:`, err);
-                if (debugPanel) {
-                    const entry = document.createElement('div');
-                    entry.style.whiteSpace = 'pre-wrap';
-                    entry.style.fontSize = '12px';
-                    entry.style.padding = '8px';
-                    entry.style.marginBottom = '8px';
-                    entry.style.background = 'rgba(255,0,0,0.03)';
-                    entry.style.borderRadius = '6px';
-                    entry.style.color = '#f8d7da';
-                    entry.innerText = `[${new Date().toLocaleTimeString()}] ${numero} -> EXCEPTION: ${String(err)}`;
-                    debugPanel.insertBefore(entry, debugPanel.children[1] || null);
-                }
-                return {
-                    radicado: numero,
-                    idProceso: null,
-                    demandante: 'N/A',
-                    demandado: 'N/A',
-                    juzgado: 'N/A',
-                    clase: 'N/A',
-                    subclase: 'N/A',
-                    ubicacion: 'N/A',
-                    fechaUltimaActuacion: 'N/A',
-                    error: String(err)
-                };
-            } finally {
-                // Update progress bar after each promise settles
-                const completed = lastResults.length + 1; // This is not accurate for parallel
-                const total = validNumbers.length;
-                const pct = Math.round((completed / total) * 100);
-                progressBar.style.width = `${pct}%`;
-                progressText.textContent = `${completed} de ${total} procesos consultados`;
+    
+        // Call the batch endpoint /api/procesos?q=... (no fallback to single-query)
+        try {
+            progressStatus.textContent = 'Consultando endpoint batch /api/procesos...';
+            const q = validNumbers.join(',');
+            const resp = await fetch(`/api/procesos?q=${encodeURIComponent(q)}`, {
+                method: 'GET',
+                headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {}
+            });
+            const data = await resp.json();
+    
+            // Append raw batch response to debug panel
+            if (debugPanel) {
+                const entry = document.createElement('div');
+                entry.style.whiteSpace = 'pre-wrap';
+                entry.style.fontSize = '12px';
+                entry.style.padding = '8px';
+                entry.style.marginBottom = '8px';
+                entry.style.background = resp.ok ? 'rgba(255,255,255,0.02)' : 'rgba(255,0,0,0.03)';
+                entry.style.borderRadius = '6px';
+                entry.style.color = '#cbd5e1';
+                entry.innerText = `[${new Date().toLocaleTimeString()}] BATCH -> ${JSON.stringify(data, null, 2)}`;
+                debugPanel.insertBefore(entry, debugPanel.children[1] || null);
             }
-        });
-
-        const results = await Promise.allSettled(promises);
-        lastResults = results.map(result => result.status === 'fulfilled' ? result.value : result.reason);
-        renderResultsTable(lastResults);
-
-        progressStatus.textContent = 'Completado';
-        // hide progress after short delay
-        setTimeout(() => {
-            progressContainer.classList.add('hidden');
-        }, 1200);
+    
+            if (!resp.ok) {
+                // Server returned an error
+                console.error('Batch endpoint returned HTTP error', resp.status, data);
+                progressStatus.textContent = `Error batch: ${resp.status}`;
+                progressBar.style.width = '0%';
+                // Show error to user and stop
+                const container = document.getElementById('query-result');
+                container.innerHTML = `<div class="table-error">Error al consultar el endpoint batch: ${data.detail || resp.status}</div>`;
+                setTimeout(() => progressContainer.classList.add('hidden'), 1200);
+                return;
+            }
+    
+            if (!data || !Array.isArray(data.results)) {
+                console.error('Batch endpoint returned unexpected payload', data);
+                const container = document.getElementById('query-result');
+                container.innerHTML = `<div class="table-error">Respuesta inesperada del servidor.</div>`;
+                progressStatus.textContent = 'Error';
+                setTimeout(() => progressContainer.classList.add('hidden'), 1200);
+                return;
+            }
+    
+            // Success - render results (the backend returns canonical keys)
+            displayBatchResults(data.results);
+            progressBar.style.width = '100%';
+            progressText.textContent = `${data.results.length} de ${validNumbers.length} procesos consultados`;
+            progressStatus.textContent = 'Completado (batch)';
+            setTimeout(() => progressContainer.classList.add('hidden'), 1200);
+            return;
+    
+        } catch (err) {
+            console.error('Error calling /api/procesos:', err);
+            if (debugPanel) {
+                const entry = document.createElement('div');
+                entry.style.whiteSpace = 'pre-wrap';
+                entry.style.fontSize = '12px';
+                entry.style.padding = '8px';
+                entry.style.marginBottom = '8px';
+                entry.style.background = 'rgba(255,0,0,0.03)';
+                entry.style.borderRadius = '6px';
+                entry.style.color = '#f8d7da';
+                entry.innerText = `[${new Date().toLocaleTimeString()}] BATCH_FAIL -> EXCEPTION: ${String(err)}`;
+                debugPanel.insertBefore(entry, debugPanel.children[1] || null);
+            }
+    
+            const container = document.getElementById('query-result');
+            container.innerHTML = `<div class="table-error">No se pudo conectar al endpoint batch. Intenta más tarde.</div>`;
+            progressStatus.textContent = 'Error';
+            progressBar.style.width = '0%';
+            setTimeout(() => progressContainer.classList.add('hidden'), 1200);
+            return;
+        }
     }
 
     // Store last results for sorting / re-render
@@ -678,18 +662,31 @@
     }
 
     function displayBatchResults(results){
-        // Normalize results to the expected structure
+        // Normalize results to the expected structure and sanitize values to avoid "Not Found" / "N/A" leaking
+        const normalize = (v) => {
+            if (v === null || v === undefined) return '';
+            if (typeof v === 'string') {
+                const t = v.trim();
+                if (!t) return '';
+                // Normalize common placeholders
+                if (t.toLowerCase() === 'not found' || t === 'N/A') return '';
+                return t;
+            }
+            return String(v);
+        };
+    
         allResults = results.map(r => {
             return {
                 radicado: r.radicado || r.numero || '',
                 idProceso: r.idProceso || r.id_proceso || '',
-                demandante: r.demandante || 'N/A',
-                demandado: r.demandado || 'N/A',
-                juzgado: r.juzgado || r.despacho || 'N/A',
-                clase: r.clase || r.clase_proceso || 'N/A',
-                subclase: r.subclase || r.subclase_proceso || 'N/A',
-                ubicacion: r.ubicacion || 'N/A',
-                fechaUltimaActuacion: r.fechaUltimaActuacion || r.fecha_ultima_actuacion || 'N/A',
+                demandante: normalize(r.demandante),
+                demandado: normalize(r.demandado),
+                juzgado: normalize(r.juzgado || r.despacho),
+                clase: normalize(r.clase || r.clase_proceso),
+                subclase: normalize(r.subclase || r.subclase_proceso),
+                ubicacion: normalize(r.ubicacion),
+                // Keep date as ISO string or null (render layer will show "N/A" safely)
+                fechaUltimaActuacion: r.fechaUltimaActuacion || r.fecha_ultima_actuacion || null,
                 _raw: r._raw || null // Keep raw data for debug if needed
             };
         });
@@ -732,7 +729,8 @@
             const payload = {
                 numero: proc.radicado || radicado,
                 id_proceso: proc.idProceso || '',
-                fecha_ultima_actuacion: proc.fechaUltimaActuacion ? new Date(proc.fechaUltimaActuacion).toISOString().split('T')[0] : null, // Ensure ISO date string
+                // Send the backend-provided fechaUltimaActuacion as-is (backend will accept ISO or null)
+                fecha_ultima_actuacion: proc.fechaUltimaActuacion || null,
                 despacho: proc.juzgado || '',
                 departamento: '', // Not available in current API response
                 demandante: proc.demandante || '',
@@ -779,11 +777,15 @@
             .replace(/'/g, '&#039;');
     }
 
-    // Helper to format date to DD/MM/YYYY
+    // Helper to format date to DD/MM/YYYY (defensive: avoids NaN/NaN/NaN)
     function formateaFecha(iso) {
         if (!iso) return 'N/A';
+        // If already formatted as DD/MM/YYYY return it
+        if (typeof iso === 'string' && /^\d{2}\/\d{2}\/\d{4}$/.test(iso.trim())) return iso.trim();
+        if (iso === 'N/A') return 'N/A';
         try {
             const d = new Date(iso);
+            if (isNaN(d.getTime())) return 'N/A';
             const dd = String(d.getDate()).padStart(2, '0');
             const mm = String(d.getMonth() + 1).padStart(2, '0');
             const yyyy = d.getFullYear();
