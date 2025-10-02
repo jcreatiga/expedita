@@ -763,92 +763,177 @@
 
     // Helper to POST saved process to backend
     // New signature: saveProcess(buttonElement, radicado, procString)
+    // Shows a modal allowing the user to optionally assign the saved expediente to a project.
     async function saveProcess(btn, radicado, procString) {
         if (!authToken) {
-            // If not authenticated, show login
             toast.error('Debes iniciar sesión para guardar procesos.');
             showAuth();
             return;
         }
-
-        // disable button optimistically
+    
+        // parse the row payload early
+        let proc = {};
         try {
-            if (btn && typeof btn.setAttribute === 'function') {
-                btn.setAttribute('disabled', 'true');
+            proc = JSON.parse(decodeURIComponent(procString));
+        } catch (e) {
+            console.error('Invalid procString:', e);
+            toast.error('Error interno: datos inválidos');
+            return;
+        }
+    
+        // Disable source button to avoid double clicks
+        if (btn && typeof btn.setAttribute === 'function') {
+            btn.setAttribute('disabled', 'true');
+        }
+    
+        let projects = [];
+        try {
+            // Load projects to populate modal select
+            const r = await fetch('/api/projects', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            const j = await r.json().catch(() => null);
+            if (r.ok && j && Array.isArray(j.projects)) {
+                projects = j.projects;
+            } else {
+                // If projects can't be loaded, proceed with empty list (user can still save without project)
+                console.warn('Failed to load projects for save modal', j);
+                projects = [];
             }
-            const proc = JSON.parse(decodeURIComponent(procString));
-            // Build payload using the same normalized keys used to render rows.
+        } catch (e) {
+            console.warn('Error loading projects', e);
+            projects = [];
+        }
+    
+        try {
+            // Show modal to let user pick a project (or cancel)
+            const selectedProjectId = await showSaveModal(radicado, projects);
+            // selectedProjectId:
+            //  - undefined => user cancelled
+            //  - null => confirmed "Sin proyecto"
+            //  - value => project id selected
+            if (selectedProjectId === undefined) {
+                // user cancelled
+                return;
+            }
+    
+            // Build payload to send to /api/saved (same normalization used previously)
             const payload = {
                 radicado: proc.radicado || radicado,
-                idProceso: proc.idProceso || proc.id_proceso || '',
+                id_proceso: proc.idProceso || proc.id_proceso || '',
+                fecha_ultima_actuacion: proc.fechaUltimaActuacion || proc.fecha_ultima_actuacion || null,
+                despacho: proc.juzgado || proc.despacho || '',
+                departamento: proc.departamento || null,
                 demandante: proc.demandante || '',
                 demandado: proc.demandado || '',
-                juzgado: proc.juzgado || proc.despacho || '',
-                clase: proc.clase || proc.clase_proceso || '',
-                subclase: proc.subclase || proc.subclase_proceso || '',
-                ubicacion: proc.ubicacion || '',
-                // Keep fecha as provided by the row (may be ISO or DD/MM/YYYY or null)
-                fecha: proc.fechaUltimaActuacion || proc.fecha_ultima_actuacion || null,
-                // include raw snapshot if present
-                _raw: proc._raw || null
+                response_json: proc._raw ? proc._raw.consulta || null : null,
+                detalle_json: proc._raw ? proc._raw.detalle || null : null,
+                tipo_proceso: proc.clase || proc.clase_proceso || '',
+                clase_proceso: proc.clase || proc.clase_proceso || '',
+                subclase_proceso: proc.subclase || proc.subclase_proceso || '',
+                ubicacion: proc.ubicacion || ''
             };
-
+    
+            // Disable modal confirm button by temporarily setting modal-confirm to disabled (defensive)
+            const modalConfirmBtn = document.getElementById('modal-confirm');
+            if (modalConfirmBtn) modalConfirmBtn.setAttribute('disabled', 'true');
+    
+            // 1) Save to /api/saved
             const resp = await fetch('/api/saved', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${authToken}`
                 },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    radicado: payload.radicado,
+                    id_proceso: payload.id_proceso,
+                    fecha_ultima_actuacion: payload.fecha_ultima_actuacion,
+                    despacho: payload.despacho,
+                    departamento: payload.departamento,
+                    demandante: payload.demandante,
+                    demandado: payload.demandado,
+                    response_json: payload.response_json,
+                    detalle_json: payload.detalle_json,
+                    tipo_proceso: payload.tipo_proceso,
+                    clase_proceso: payload.clase_proceso,
+                    subclase_proceso: payload.subclase_proceso,
+                    ubicacion: payload.ubicacion
+                })
             });
-
-            let data;
-            try {
-                data = await resp.json();
-            } catch (e) {
-                data = null;
+            const data = await resp.json().catch(() => null);
+            if (!resp.ok || !data || data.status !== 'OK') {
+                // Save failed
+                toast.error(`No se pudo guardar: ${data?.detail || resp.status || 'Error'}`);
+                return;
             }
-
-            if (resp.ok && data && data.status === 'OK') {
-                // success toast
-                toast.success('Guardado');
-                // visually mark saved row: find the closest <tr> and add a green check near radicado
+    
+            const savedId = data.saved?.id;
+    
+            // 2) If project selected, link it
+            if (selectedProjectId) {
                 try {
-                    const row = btn ? btn.closest('tr') : null;
-                    if (row) {
-                        const th = row.querySelector('th[scope="row"]');
-                        if (th) {
-                            // append a small green check icon (material-icons) if not already present
-                            if (!th.querySelector('.saved-check .material-icons')) {
-                                const span = document.createElement('span');
-                                span.className = 'material-icons text-green-500 text-base saved-check';
-                                span.style.marginLeft = '6px';
-                                span.title = 'Guardado';
-                                span.textContent = 'check_circle';
-                                th.appendChild(span);
-                            }
-                        }
+                    const linkResp = await fetch(`/api/projects/${selectedProjectId}/cases`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken}`
+                        },
+                        body: JSON.stringify({ savedProcessId: savedId })
+                    });
+                    const linkData = await linkResp.json().catch(() => null);
+                    if (linkResp.ok) {
+                        // find project name for toast
+                        const p = projects.find(pp => String(pp.id) === String(selectedProjectId));
+                        const projName = p ? p.name : 'proyecto seleccionado';
+                        toast.success(`Expediente guardado. Asignado al proyecto ${projName}`);
+                    } else {
+                        // Linking failed but saved exists
+                        toast.success('Expediente guardado');
+                        toast.error(`No se pudo asignar al proyecto: ${linkData?.detail || linkResp.status}`);
                     }
-                } catch (e) {
-                    console.warn('Could not mark saved row visually', e);
-                }
-                // Optionally refresh saved list if user is viewing saved tab
-                // If the saved tab is active, reload saved processes
-                if (document.getElementById('tab-saved') && document.getElementById('tab-saved').classList.contains('active')) {
-                    await loadSavedProcesses();
+                } catch (linkErr) {
+                    console.error('Error linking saved process to project', linkErr);
+                    toast.success('Expediente guardado');
+                    toast.error('No se pudo asignar al proyecto (error de conexión)');
                 }
             } else {
-                // show backend message for 503 or other errors
-                if (resp.status === 503) {
-                    toast.error(data?.detail || 'No se puede guardar ahora');
-                } else {
-                    toast.error(data?.detail || JSON.stringify(data) || 'No se pudo guardar el proceso');
-                }
+                // No project chosen
+                toast.success('Expediente guardado');
             }
+    
+            // Visual mark on row (if present)
+            try {
+                const row = btn ? btn.closest('tr') : null;
+                if (row) {
+                    const th = row.querySelector('th[scope="row"]');
+                    if (th && !th.querySelector('.saved-check .material-icons')) {
+                        const span = document.createElement('span');
+                        span.className = 'material-icons text-green-500 text-base saved-check';
+                        span.style.marginLeft = '6px';
+                        span.title = 'Guardado';
+                        span.textContent = 'check_circle';
+                        th.appendChild(span);
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not mark saved row visually', e);
+            }
+    
+            // If saved tab active, refresh saved list
+            if (document.getElementById('tab-saved') && document.getElementById('tab-saved').classList.contains('active')) {
+                await loadSavedProcesses();
+            }
+    
         } catch (err) {
             console.error('saveProcess error:', err);
             toast.error(err?.message || 'Error guardando proceso (ver consola).');
         } finally {
+            // Re-enable modal confirm & source button
+            try {
+                const modalConfirmBtn2 = document.getElementById('modal-confirm');
+                if (modalConfirmBtn2) modalConfirmBtn2.removeAttribute('disabled');
+            } catch (e) { /* ignore */ }
             if (btn && typeof btn.removeAttribute === 'function') {
                 btn.removeAttribute('disabled');
             }
@@ -1034,68 +1119,269 @@
         }
     }
 
-    // Render saved processes view (with checkboxes, acciones, and refresh controls)
+    // Projects (Mis Procesos) view (replaces previous "Procesos Guardados" screen)
+    // This function keeps the original name loadSavedProcesses to avoid changing other callers.
     async function loadSavedProcesses(){
         if(!authToken) {
             showAuth();
             return;
         }
         const container = document.getElementById('query-result');
-        container.innerHTML = '<div class="table-loading">Cargando procesos guardados...</div>';
-
+        container.innerHTML = '<div class="table-loading">Cargando proyectos...</div>';
+    
         try{
-            const resp = await fetch('/api/saved', {
+            const resp = await fetch('/api/projects', {
                 headers: { 'Authorization': `Bearer ${authToken}` }
             });
             const data = await resp.json();
-
+    
             if (!resp.ok) {
                 if (resp.status === 503) {
-                    toast.error(data?.detail || 'No se puede acceder a procesos guardados ahora');
-                    container.innerHTML = `<div class="table-error">${data?.detail || 'No se puede acceder a procesos guardados ahora'}</div>`;
+                    toast.error(data?.detail || 'No se puede acceder a proyectos ahora');
+                    container.innerHTML = `<div class="table-error">${data?.detail || 'No se puede acceder a proyectos ahora'}</div>`;
                     return;
                 }
-                container.innerHTML = `<div class="table-error">Error cargando procesos guardados: ${data.detail || 'Error desconocido'}</div>`;
-                console.error('Error cargando procesos guardados:', data);
+                container.innerHTML = `<div class="table-error">Error cargando proyectos: ${data.detail || 'Error desconocido'}</div>`;
+                console.error('Error cargando proyectos:', data);
                 return;
             }
-
-            // Backend may return array directly or an object with rows/saved
-            let savedRows = [];
-            if (Array.isArray(data)) savedRows = data;
-            else if (Array.isArray(data.rows)) savedRows = data.rows;
-            else if (Array.isArray(data.saved)) savedRows = data.saved;
-            else if (Array.isArray(data.data)) savedRows = data.data;
-            else if (data && data.items && Array.isArray(data.items)) savedRows = data.items;
-            else savedRows = [];
-
-            // Map to display rows including metadata
-            const mapped = savedRows.map(s => mapSavedRowToTableRow(s));
-
-            // Sort by updatedAt desc if present (backend already sorts but be defensive)
-            mapped.sort((a,b) => {
-                const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-                const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-                return tb - ta;
-            });
-
-            // Build UI: top controls + table
-            const controls = `
-                <div class="flex items-center justify-between mb-4">
-                    <div class="flex items-center gap-3">
-                        <button id="btn-refresh-selected" class="bg-primary text-white px-4 py-2 rounded-md">Actualizar seleccionados</button>
-                        <button id="btn-refresh-all" class="bg-transparent border border-primary text-primary px-4 py-2 rounded-md">Actualizar todos</button>
+    
+            const projects = Array.isArray(data.projects) ? data.projects : [];
+    
+            // Build projects grid (responsive)
+            const gridHtmlStart = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">`;
+            const gridHtmlEnd = `</div>`;
+            const cardHtml = projects.map(p => {
+                const color = p.colorHex || '#2563EB';
+                // small helpers for inline style (tint background)
+                const rgba = hexToRgba(color, 0.08);
+                const border = color;
+                const updated = p.updatedAt ? formatDateToDisplay(p.updatedAt) : 'N/A';
+                return `
+                    <div class="p-4 rounded-lg" data-project-id="${p.id}" style="background:${rgba}; border:1px solid ${border};">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="material-icons">folder</span>
+                                    <h3 class="font-semibold text-lg">${escapeHtml(p.name)}</h3>
+                                </div>
+                                <p class="text-sm text-secondary-text-light dark:text-secondary-text-dark mt-2">
+                                    <span title="Total expedientes" class="inline-flex items-center gap-2">
+                                        <span class="material-icons text-sm">inventory_2</span>
+                                        ${p.total || p.total === 0 ? p.total : 0}
+                                    </span>
+                                    <span class="ml-4 inline-flex items-center gap-2" title="Fecha de última actualización">
+                                        <span class="material-icons text-sm">calendar_today</span>
+                                        Act: ${escapeHtml(updated)}
+                                    </span>
+                                </p>
+                            </div>
+                            <div class="relative">
+                                <button class="project-kebab-btn" data-project-id="${p.id}" aria-label="menu">⋮</button>
+                                <div class="project-kebab-menu hidden absolute right-0 mt-2 w-44 bg-panel-light dark:bg-panel-dark rounded shadow-md z-40 p-2">
+                                    <button class="w-full text-left px-2 py-2 hover:bg-background-light dark:hover:bg-background-dark btn-rename" data-project-id="${p.id}">Renombrar</button>
+                                    <button class="w-full text-left px-2 py-2 hover:bg-background-light dark:hover:bg-background-dark btn-color" data-project-id="${p.id}" data-color="${p.colorHex}">Cambiar color</button>
+                                    <button class="w-full text-left px-2 py-2 hover:bg-background-light dark:hover:bg-background-dark text-red-500 btn-delete" data-project-id="${p.id}">Eliminar</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div id="progressStatus" class="text-sm text-secondary-text-light dark:text-secondary-text-dark"></div>
+                `;
+            }).join('');
+    
+            // "Nuevo proyecto" card
+            const newCard = `
+                <div class="p-4 rounded-lg flex items-center justify-center cursor-pointer hover:scale-102" id="new-project-card" style="border:1px dashed rgba(255,255,255,0.06);">
+                    <div class="text-center">
+                        <div class="text-3xl text-primary mb-2">+</div>
+                        <div class="text-sm">Nuevo proyecto</div>
+                    </div>
                 </div>
             `;
-
-            const tableHtml = `
+    
+            container.innerHTML = gridHtmlStart + newCard + cardHtml + gridHtmlEnd;
+    
+            // Attach handlers
+            document.getElementById('new-project-card').addEventListener('click', async () => {
+                const name = await modalPrompt('Nombre del nuevo proyecto:');
+                if (!name || !name.trim()) {
+                    toast.error('Nombre inválido');
+                    return;
+                }
+                const payload = { name: name.trim(), colorHex: '#2563EB' };
+                try {
+                    const r = await fetch('/api/projects', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                        body: JSON.stringify(payload)
+                    });
+                    const j = await r.json();
+                    if (r.ok) {
+                        toast.success('Proyecto creado');
+                        await loadSavedProcesses();
+                    } else {
+                        toast.error(j?.detail || 'Error creando proyecto');
+                    }
+                } catch (e) {
+                    console.error('Error creating project', e);
+                    toast.error('Error de conexión');
+                }
+            });
+    
+            // Card click -> open project detail
+            document.querySelectorAll('[data-project-id]').forEach(el => {
+                // Avoid attaching to kebab buttons
+                if (el.id === 'new-project-card') return;
+                el.addEventListener('click', (ev) => {
+                    // if clicked on kebab or menu, ignore
+                    if (ev.target.closest('.project-kebab-btn') || ev.target.closest('.project-kebab-menu') ) return;
+                    const pid = el.getAttribute('data-project-id');
+                    if (pid) loadProjectDetail(pid);
+                });
+            });
+    
+            // Kebab menu toggle & actions
+            document.querySelectorAll('.project-kebab-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const pid = btn.dataset.projectId;
+                    const menu = btn.parentElement.querySelector('.project-kebab-menu');
+                    if (menu) menu.classList.toggle('hidden');
+                });
+            });
+    
+            // Rename
+            document.querySelectorAll('.btn-rename').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const pid = b.dataset.projectId;
+                    const currentName = b.closest('[data-project-id]') ? b.closest('[data-project-id]').querySelector('h3')?.textContent : '';
+                    const newName = await modalPrompt('Nuevo nombre del proyecto:', currentName || '');
+                    if (!newName || !newName.trim()) { toast.error('Nombre inválido'); return; }
+                    try {
+                        const r = await fetch(`/api/projects/${pid}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                            body: JSON.stringify({ name: newName.trim() })
+                        });
+                        const j = await r.json();
+                        if (r.ok) {
+                            toast.success('Renombrado');
+                            await loadSavedProcesses();
+                        } else {
+                            toast.error(j?.detail || 'Error renombrando');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        toast.error('Error de conexión');
+                    }
+                });
+            });
+    
+            // Change color
+            document.querySelectorAll('.btn-color').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const pid = b.dataset.projectId;
+                    const currentColor = b.dataset.color || '#2563EB';
+                    const newColor = await modalPrompt('Color hexadecimal (ej: #2563EB):', currentColor);
+                    if (!newColor || !/^#([0-9A-Fa-f]{6})$/.test(newColor.trim())) { toast.error('Color inválido'); return; }
+                    try {
+                        const r = await fetch(`/api/projects/${pid}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                            body: JSON.stringify({ colorHex: newColor.trim() })
+                        });
+                        const j = await r.json();
+                        if (r.ok) {
+                            toast.success('Color actualizado');
+                            await loadSavedProcesses();
+                        } else {
+                            toast.error(j?.detail || 'Error actualizando color');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        toast.error('Error de conexión');
+                    }
+                });
+            });
+    
+            // Delete
+            document.querySelectorAll('.btn-delete').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const pid = b.dataset.projectId;
+                    if (!(await modalConfirm('Eliminar proyecto y desvincular expedientes?'))) return;
+                    try {
+                        const r = await fetch(`/api/projects/${pid}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${authToken}` }
+                        });
+                        const j = await r.json().catch(()=>null);
+                        if (r.ok) {
+                            toast.success('Proyecto eliminado');
+                            await loadSavedProcesses();
+                        } else {
+                            toast.error(j?.detail || 'Error eliminando proyecto');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        toast.error('Error de conexión');
+                    }
+                });
+            });
+    
+        } catch(err){
+            console.error('Error cargando proyectos:', err);
+            toast.error('Error de conexión al cargar proyectos.');
+            container.innerHTML = `<div class="table-error">Error de conexión al cargar proyectos.</div>`;
+        }
+    }
+    
+    // Helper: convert hex to rgba with alpha (simple)
+    function hexToRgba(hex, alpha=0.08) {
+        try {
+            const h = hex.replace('#','');
+            const r = parseInt(h.substring(0,2),16);
+            const g = parseInt(h.substring(2,4),16);
+            const b = parseInt(h.substring(4,6),16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        } catch(e){
+            return `rgba(37,99,235, ${alpha})`;
+        }
+    }
+    
+    // Load project detail (cases table)
+    async function loadProjectDetail(projectId) {
+        if(!authToken) { showAuth(); return; }
+        const container = document.getElementById('query-result');
+        container.innerHTML = '<div class="table-loading">Cargando proyecto...</div>';
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/cases`, { headers: { 'Authorization': `Bearer ${authToken}` }});
+            const data = await resp.json();
+            if (!resp.ok) {
+                toast.error(data?.detail || 'Error cargando proyecto');
+                container.innerHTML = `<div class="table-error">${data?.detail || 'Error cargando proyecto'}</div>`;
+                return;
+            }
+            const cases = data.cases || [];
+            // Breadcrumb & toolbar
+            const toolbar = `
+                <div class="flex items-center justify-between mb-4">
+                    <div class="text-sm text-secondary-text-light dark:text-secondary-text-dark">Mis Procesos / <strong>Proyecto ${escapeHtml(String(projectId))}</strong></div>
+                    <div class="flex items-center gap-2">
+                        <button id="btn-refresh-selected-proj" class="bg-primary text-white px-3 py-2 rounded">Actualizar seleccionados</button>
+                        <button id="btn-refresh-all-proj" class="bg-transparent border border-primary text-primary px-3 py-2 rounded">Actualizar todos</button>
+                        <button id="btn-add-case" class="bg-primary text-white px-3 py-2 rounded">Añadir expediente</button>
+                    </div>
+                </div>
+            `;
+            const tableHtmlStart = `
                 <div class="table-container">
-                    <table id="results-table" role="table" aria-label="Procesos Guardados">
+                    <table id="project-cases-table" role="table" aria-label="Expedientes del proyecto">
                         <thead>
                             <tr>
-                                <th scope="col"><input id="check-all-saved" type="checkbox" /></th>
+                                <th scope="col"><input id="check-all-project" type="checkbox" /></th>
                                 <th scope="col">Radicado</th>
                                 <th scope="col">Demandante</th>
                                 <th scope="col">Demandado</th>
@@ -1108,70 +1394,267 @@
                                 <th scope="col">Opciones</th>
                             </tr>
                         </thead>
-                        <tbody id="results-tbody">
+                        <tbody id="project-cases-tbody">
                         </tbody>
                     </table>
                 </div>
             `;
-
-            container.innerHTML = controls + tableHtml;
-
-            // Populate rows
-            const tbody = document.getElementById('results-tbody');
-            for (const s of mapped) {
-                const fecha = formatDateToDisplay(s.fechaUltimaActuacion);
-                const updated = formatDateToDisplay(s.updatedAt);
-                const id = s.savedId || '';
+            container.innerHTML = toolbar + tableHtmlStart;
+            const tbody = document.getElementById('project-cases-tbody');
+            for (const c of cases) {
+                const updated = c.updatedAt || 'N/A';
+                const fecha = c.fechaUltimaActuacion || 'N/A';
                 const row = document.createElement('tr');
                 row.className = 'border-b dark:border-gray-700';
-                row.dataset.savedId = id;
+                row.dataset.caseId = c.id;
                 row.innerHTML = `
-                    <td class="px-4 py-2 text-center"><input class="saved-checkbox" type="checkbox" data-id="${id}" /></td>
-                    <td class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap"><span class="radicado-text">${escapeHtml(s.radicado)}</span> <span class="saved-badge ml-2"></span></td>
-                    <td class="px-6 py-4 truncate-cell" data-col="demandante"><span>${escapeHtml(s.demandante)}</span></td>
-                    <td class="px-6 py-4 truncate-cell" data-col="demandado"><span>${escapeHtml(s.demandado)}</span></td>
-                    <td class="px-6 py-4 truncate-cell" data-col="juzgado"><span>${escapeHtml(s.juzgado)}</span></td>
-                    <td class="px-6 py-4 truncate-cell" data-col="clase"><span>${escapeHtml(s.clase)}</span></td>
-                    <td class="px-6 py-4 truncate-cell" data-col="subclase"><span>${escapeHtml(s.subclase)}</span></td>
-                    <td class="px-6 py-4 truncate-cell" data-col="ubicacion"><span>${escapeHtml(s.ubicacion)}</span></td>
+                    <td class="px-4 py-2 text-center"><input class="proj-checkbox" type="checkbox" data-id="${c.id}" /></td>
+                    <td class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" title="idProceso: ${c.idProceso || 'N/A'}">${escapeHtml(c.radicado || '')}</td>
+                    <td class="px-6 py-4 truncate-cell" data-col="demandante">${escapeHtml(c.demandante || '')}</td>
+                    <td class="px-6 py-4 truncate-cell" data-col="demandado">${escapeHtml(c.demandado || '')}</td>
+                    <td class="px-6 py-4 truncate-cell" data-col="juzgado">${escapeHtml(c.juzgado || '')}</td>
+                    <td class="px-6 py-4 truncate-cell" data-col="clase">${escapeHtml(c.clase || '')}</td>
+                    <td class="px-6 py-4 truncate-cell" data-col="subclase">${escapeHtml(c.subclase || '')}</td>
+                    <td class="px-6 py-4 truncate-cell" data-col="ubicacion">${escapeHtml(c.ubicacion || '')}</td>
                     <td class="px-6 py-4" data-col="fechaUltimaActuacion">${escapeHtml(fecha)}</td>
                     <td class="px-6 py-4 text-sm text-secondary-text-light" data-col="updatedAt">${escapeHtml(updated)}</td>
                     <td class="px-6 py-4 text-right">
-                        <button class="mr-2 px-3 py-1 bg-primary text-white rounded text-sm" onclick="refreshSavedSingle('${id}')">Actualizar</button>
-                        <button class="px-3 py-1 bg-red-600 text-white rounded text-sm" onclick="(async () => await deleteSaved('${id}', this))()">Eliminar</button>
+                        <button class="mr-2 px-3 py-1 bg-primary text-white rounded text-sm btn-refresh-row" data-case-id="${c.id}">Actualizar</button>
+                        <button class="px-3 py-1 bg-red-600 text-white rounded text-sm btn-delete-row" data-case-id="${c.id}">Eliminar</button>
                     </td>
                 `;
                 tbody.appendChild(row);
             }
-
-            // wire controls
-            document.getElementById('btn-refresh-selected').addEventListener('click', async () => {
-                const checked = Array.from(document.querySelectorAll('.saved-checkbox:checked')).map(cb => cb.dataset.id).filter(Boolean);
-                if (checked.length === 0) {
-                    if (!(await modalConfirm('No hay procesos seleccionados. ¿Deseas actualizar todos?'))) return;
-                    await refreshSaved(); // refresh all
-                } else {
-                    await refreshSaved(checked);
+    
+            // wire project-level controls
+            document.getElementById('btn-add-case').addEventListener('click', async () => {
+                const rad = await modalPrompt('Ingrese número de radicación (23 dígitos):');
+                if (!rad || !/^\d{23}$/.test(rad.trim())) { toast.error('Radicado inválido'); return; }
+                try {
+                    const r = await fetch(`/api/projects/${projectId}/cases`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                        body: JSON.stringify({ radicado: rad.trim() })
+                    });
+                    const j = await r.json();
+                    if (r.ok) {
+                        toast.success('Expediente añadido');
+                        await loadProjectDetail(projectId);
+                    } else {
+                        toast.error(j?.detail || 'Error añadiendo expediente');
+                    }
+                } catch (e) {
+                    console.error(e);
+                    toast.error('Error de conexión');
                 }
             });
-            document.getElementById('btn-refresh-all').addEventListener('click', async () => {
-                if (!(await modalConfirm('Actualizar todos los procesos guardados?'))) return;
-                await refreshSaved(); // no ids -> refresh all
+    
+            document.getElementById('btn-refresh-all-proj').addEventListener('click', async () => {
+                if (!(await modalConfirm('Actualizar todos los expedientes de este proyecto?'))) return;
+                try {
+                    const r = await fetch(`/api/projects/${projectId}/refresh`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    const j = await r.json();
+                    if (r.ok) {
+                        // highlight changed rows if any
+                        if (Array.isArray(j.rows)) {
+                            for (const change of j.rows) {
+                                if (change.changedFields && change.changedFields.length) {
+                                    const tr = document.querySelector(`tr[data-case-id="${change.caseId}"]`);
+                                    if (tr) {
+                                        for (const cf of change.changedFields) {
+                                            const cell = tr.querySelector(`[data-col="${cf}"]`);
+                                            if (cell) cell.classList.add('bg-amber-500/10');
+                                        }
+                                    }
+                                    toast.info(`Cambios detectados para ${change.radicado || change.caseId}`);
+                                }
+                            }
+                        }
+                        await loadProjectDetail(projectId);
+                    } else {
+                        toast.error(j?.detail || 'Error actualizando proyecto');
+                    }
+                } catch (e) {
+                    console.error(e);
+                    toast.error('Error de conexión');
+                }
             });
-
+    
+            document.getElementById('btn-refresh-selected-proj').addEventListener('click', async () => {
+                const checked = Array.from(document.querySelectorAll('.proj-checkbox:checked')).map(cb => parseInt(cb.dataset.id)).filter(Boolean);
+                if (checked.length === 0) {
+                    if (!(await modalConfirm('No hay expedientes seleccionados. ¿Deseas actualizar todos?'))) return;
+                    // call refresh all
+                    document.getElementById('btn-refresh-all-proj').click();
+                    return;
+                }
+                try {
+                    const r = await fetch(`/api/projects/${projectId}/refresh-selected`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                        body: JSON.stringify({ caseIds: checked })
+                    });
+                    const j = await r.json();
+                    if (r.ok) {
+                        if (Array.isArray(j.rows)) {
+                            for (const change of j.rows) {
+                                if (change.changedFields && change.changedFields.length) {
+                                    const tr = document.querySelector(`tr[data-case-id="${change.caseId}"]`);
+                                    if (tr) {
+                                        for (const cf of change.changedFields) {
+                                            const cell = tr.querySelector(`[data-col="${cf}"]`);
+                                            if (cell) cell.classList.add('bg-amber-500/10');
+                                        }
+                                    }
+                                    toast.info(`Cambios detectados para ${change.radicado || change.caseId}`);
+                                }
+                            }
+                        }
+                        await loadProjectDetail(projectId);
+                    } else {
+                        toast.error(j?.detail || 'Error actualizando seleccionados');
+                    }
+                } catch (e) {
+                    console.error(e);
+                    toast.error('Error de conexión');
+                }
+            });
+    
+            // per-row handlers (refresh / delete)
+            document.querySelectorAll('.btn-refresh-row').forEach(b => {
+                b.addEventListener('click', async () => {
+                    const cid = b.dataset.caseId;
+                    try {
+                        const r = await fetch(`/api/projects/${projectId}/refresh-selected`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                            body: JSON.stringify({ caseIds: [parseInt(cid)] })
+                        });
+                        const j = await r.json();
+                        if (r.ok) {
+                            toast.success('Expediente actualizado');
+                            await loadProjectDetail(projectId);
+                        } else {
+                            toast.error(j?.detail || 'Error actualizando expediente');
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        toast.error('Error de conexión');
+                    }
+                });
+            });
+    
+            document.querySelectorAll('.btn-delete-row').forEach(b => {
+                b.addEventListener('click', async () => {
+                    const cid = b.dataset.caseId;
+                    if (!(await modalConfirm('¿Eliminar expediente del proyecto?'))) return;
+                    try {
+                        const r = await fetch(`/api/projects/${projectId}/cases/${cid}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${authToken}` }
+                        });
+                        const j = await r.json().catch(()=>null);
+                        if (r.ok) {
+                            toast.success('Expediente eliminado del proyecto');
+                            await loadProjectDetail(projectId);
+                        } else {
+                            toast.error(j?.detail || 'Error eliminando expediente');
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        toast.error('Error de conexión');
+                    }
+                });
+            });
+    
             // check-all behavior
-            const checkAll = document.getElementById('check-all-saved');
-            checkAll.addEventListener('change', (e) => {
-                const checked = e.target.checked;
-                document.querySelectorAll('.saved-checkbox').forEach(cb => cb.checked = checked);
-            });
-
-        } catch(err){
-            const container = document.getElementById('query-result');
-            console.error('Error de conexión al cargar procesos guardados:', err);
-            toast.error('Error de conexión al cargar procesos guardados.');
-            container.innerHTML = `<div class="table-error">Error de conexión al cargar procesos guardados.</div>`;
+            const checkAll = document.getElementById('check-all-project');
+            if (checkAll) {
+                checkAll.addEventListener('change', (e) => {
+                    const checked = e.target.checked;
+                    document.querySelectorAll('.proj-checkbox').forEach(cb => cb.checked = checked);
+                });
+            }
+    
+        } catch (err) {
+            console.error('Error cargando proyecto:', err);
+            toast.error('Error cargando proyecto');
+            container.innerHTML = `<div class="table-error">Error cargando proyecto.</div>`;
         }
+    }
+    
+    // Modal prompt (returns entered string or null if cancelled)
+    function modalPrompt(message, defaultValue = '') {
+        return new Promise((resolve) => {
+            modalResolve = (confirmed) => {
+                const input = document.getElementById('modal-input');
+                document.getElementById('modal-overlay').classList.add('hidden');
+                if (confirmed) {
+                    resolve(input ? input.value : defaultValue);
+                } else {
+                    resolve(null);
+                }
+            };
+            const msgEl = document.getElementById('modal-message');
+            msgEl.innerHTML = `<div class="mb-2">${escapeHtml(message)}</div><input id="modal-input" class="w-full px-3 py-2 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md" value="${escapeHtml(defaultValue || '')}" />`;
+            document.getElementById('modal-overlay').classList.remove('hidden');
+            const inputEl = document.getElementById('modal-input');
+            if (inputEl) {
+                setTimeout(() => inputEl.focus(), 50);
+            }
+        });
+    }
+
+    // Save modal (for assigning a saved expediente to an optional project)
+    // Returns:
+    //  - undefined if user cancelled
+    //  - null if user confirmed with "Sin proyecto"
+    //  - projectId (string/number) if user selected a project
+    function showSaveModal(radicado, projects) {
+        return new Promise((resolve) => {
+            modalResolve = (confirmed) => {
+                const select = document.getElementById('modal-save-project-select');
+                document.getElementById('modal-overlay').classList.add('hidden');
+                if (!confirmed) {
+                    resolve(undefined);
+                    return;
+                }
+                const val = select ? select.value : '';
+                if (!val) resolve(null);
+                else resolve(val);
+            };
+            const msgEl = document.getElementById('modal-message');
+            // Build options: first option = Sin proyecto
+            let optionsHtml = `<option value="">Sin proyecto</option>`;
+            try {
+                projects.forEach(p => {
+                    optionsHtml += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
+                });
+            } catch (e) {
+                console.warn('showSaveModal: failed building projects options', e);
+            }
+            msgEl.innerHTML = `
+                <div class="mb-2 text-lg font-semibold">Guardar expediente</div>
+                <div class="mb-3">
+                    <label class="block text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark mb-1">Radicado</label>
+                    <input type="text" readonly class="w-full px-3 py-2 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md" value="${escapeHtml(radicado)}" />
+                </div>
+                <div class="mb-2">
+                    <label class="block text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark mb-1">Proyecto (opcional)</label>
+                    <select id="modal-save-project-select" class="w-full px-3 py-2 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md">${optionsHtml}</select>
+                </div>
+                <div class="text-sm text-secondary-text-light dark:text-secondary-text-dark mt-2">Selecciona un proyecto para asignar el expediente (opcional).</div>
+            `;
+            document.getElementById('modal-overlay').classList.remove('hidden');
+            // focus select
+            setTimeout(() => {
+                const sel = document.getElementById('modal-save-project-select');
+                if (sel) sel.focus();
+            }, 60);
+        });
     }
 
     // Refresh saved processes (ids optional array). Calls POST /api/saved/refresh
