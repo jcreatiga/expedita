@@ -1970,320 +1970,159 @@ async def api_delete_project(project_id: int, current_user = Depends(get_current
         print(f"ERROR: Failed to delete project {project_id} for user {current_user.id}: {e}")
         return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
 
+# --- Project cases endpoints (normalized indentation) ---
+from fastapi import HTTPException, Depends
+from sqlalchemy.orm import Session
+
+# helper to fetch project owned by current user
+def _get_owned_project(db: Session, user_id: str, project_id: int):
+    proj = db.query(Project).filter(Project.id == project_id, Project.user_id == user_id).first()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    return proj
+
 @app.get("/api/projects/{project_id}/cases")
-async def api_get_project_cases(project_id: int, current_user = Depends(get_current_user), db = Depends(get_db)):
-    if not DB_AVAILABLE or Session is None or Project is None or ProjectCase is None or db is None:
-        return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - projects disabled"})
-    try:
-        proj = db.query(Project).filter_by(id=project_id, user_id=current_user.id).first()
-        if not proj:
-            return JSONResponse(status_code=404, content={"status":"error", "detail":"Project not found"})
-        cases = db.query(ProjectCase).filter_by(project_id=proj.id).all()
-        out = []
-        for c in cases:
-            sp = c.saved_process
-            if sp:
-                fecha = sp.fecha_ultima_actuacion.strftime("%d/%m/%Y") if sp.fecha_ultima_actuacion else "N/A"
-                out.append({
-                    "id": c.id,
-                    "savedProcessId": sp.id,
-                    "radicado": sp.radicado,
-                    "idProceso": sp.id_proceso,
-                    "demandante": sp.demandante,
-                    "demandado": sp.demandado,
-                    "juzgado": sp.juzgado,
-                    "clase": sp.clase,
-                    "subclase": sp.subclase,
-                    "ubicacion": sp.ubicacion,
-                    "fechaUltimaActuacion": fecha,
-                    "updatedAt": c.updated_at.strftime("%d/%m/%Y") if c.updated_at else (sp.updated_at.strftime("%d/%m/%Y") if sp.updated_at else None)
-                })
-            else:
-                out.append({
-                    "id": c.id,
-                    "savedProcessId": None,
-                    "radicado": c.radicado,
-                    "idProceso": None,
-                    "demandante": None,
-                    "demandado": None,
-                    "juzgado": None,
-                    "clase": None,
-                    "subclase": None,
-                    "ubicacion": None,
-                    "fechaUltimaActuacion": "N/A",
-                    "updatedAt": c.updated_at.strftime("%d/%m/%Y") if c.updated_at else None
-                })
-        return {"status":"OK", "cases": out}
-    except Exception as e:
-        print(f"ERROR: Failed to list project cases for project {project_id}, user {current_user.id}: {e}")
-        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
+def list_project_cases(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _get_owned_project(db, user.id, project_id)
+    q = (
+        db.query(ProjectCase)
+        .join(Project, ProjectCase.project_id == Project.id)
+        .filter(Project.id == project_id, Project.user_id == user.id)
+    )
+    rows = []
+    for pc in q.all():
+        sp = pc.saved_process  # could be None if you used radicado-only linking
+        rows.append(
+            {
+                "id": pc.id,
+                "savedProcessId": getattr(sp, "id", None),
+                "radicado": getattr(sp, "numero", pc.radicado),
+                "idProceso": getattr(sp, "id_proceso", None),
+                "demandante": getattr(sp, "demandante", None),
+                "demandado": getattr(sp, "demandado", None),
+                "juzgado": getattr(sp, "despacho", None),
+                "clase": getattr(sp, "clase_proceso", None),
+                "subclase": getattr(sp, "subclase_proceso", None),
+                "ubicacion": getattr(sp, "ubicacion", None),
+                "fechaUltimaActuacion": getattr(sp, "fecha_ultima_actuacion", None),
+                "updatedAt": pc.updated_at.strftime("%d/%m/%Y") if pc.updated_at else None,
+            }
+        )
+    return {"status": "OK", "rows": rows}
 
 @app.post("/api/projects/{project_id}/cases")
-async def api_add_project_case(project_id: int, payload: dict, current_user = Depends(get_current_user), db = Depends(get_db), request: Request = None):
-    """
-    Body accepts either { "savedProcessId": 123 } or { "radicado": "1100..."}
-    If radicado provided, fetch from Rama (using existing helper) and upsert into SavedProcess, then link.
-    """
-    if not DB_AVAILABLE or Session is None or Project is None or ProjectCase is None or SavedProcess is None or db is None:
-        return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - projects disabled"})
-    try:
-        proj = db.query(Project).filter_by(id=project_id, user_id=current_user.id).first()
-        if not proj:
-            return JSONResponse(status_code=404, content={"status":"error", "detail":"Project not found"})
-        saved_id = payload.get("savedProcessId")
-        radicado = payload.get("radicado")
-        client_ip = request.client.host if request and request.client else "unknown"
-        user_agent = request.headers.get("user-agent", "") if request else ""
-        target_saved = None
-        if saved_id:
-            target_saved = db.query(SavedProcess).filter_by(id=saved_id, user_id=current_user.id).first()
-            if not target_saved:
-                return JSONResponse(status_code=404, content={"status":"error", "detail":"Saved process not found"})
-        elif radicado:
-            radicado = str(radicado).strip()
-            # Try to fetch fresh data using existing helper
-            res = await process_single_judicial_query(radicado, db=None, user_id=None, ip_address=client_ip, user_agent=user_agent)
-            if not isinstance(res, dict) or not res.get("success"):
-                return JSONResponse(status_code=400, content={"status":"error", "detail": f"Failed to fetch radicado: {res.get('error','No data')}"})
-            # Upsert into SavedProcess
-            # Normalize date parse similar to /api/saved
-            fecha_db = None
-            fu = res.get("fecha_ultima_actuacion")
-            if fu:
-                try:
-                    fecha_db = fu if isinstance(fu, datetime.date) else (datetime.datetime.fromisoformat(fu.replace("Z", "+00:00")).date() if isinstance(fu,str) else None)
-                except Exception:
-                    try:
-                        fecha_db = datetime.datetime.strptime(str(fu), "%Y-%m-%d").date()
-                    except Exception:
-                        fecha_db = None
-            try:
-                existing = db.query(SavedProcess).filter_by(user_id=current_user.id, radicado=radicado).first()
-                if existing:
-                    # Update fields
-                    existing.id_proceso = str(res.get("id_proceso") or existing.id_proceso)
-                    existing.demandante = res.get("demandante") or existing.demandante
-                    existing.demandado = res.get("demandado") or existing.demandado
-                    existing.juzgado = res.get("despacho") or existing.juzgado
-                    existing.clase = res.get("clase_proceso") or existing.clase
-                    existing.subclase = res.get("subclase_proceso") or existing.subclase
-                    existing.ubicacion = res.get("ubicacion") or existing.ubicacion
-                    if fecha_db:
-                        existing.fecha_ultima_actuacion = fecha_db
-                    existing.snapshot_consulta = res.get("response_json") if isinstance(res.get("response_json"), str) else (json.dumps(res.get("response_json")) if res.get("response_json") is not None else existing.snapshot_consulta)
-                    existing.snapshot_detalle = res.get("detalle_json") if isinstance(res.get("detalle_json"), str) else (json.dumps(res.get("detalle_json")) if res.get("detalle_json") is not None else existing.snapshot_detalle)
-                    existing.updated_at = datetime.datetime.utcnow()
-                    db.commit()
-                    db.refresh(existing)
-                    target_saved = existing
-                else:
-                    new_sp = SavedProcess(
-                        user_id=current_user.id,
-                        radicado=radicado,
-                        id_proceso=str(res.get("id_proceso")) if res.get("id_proceso") else None,
-                        demandante=res.get("demandante"),
-                        demandado=res.get("demandado"),
-                        juzgado=res.get("despacho"),
-                        clase=res.get("clase_proceso"),
-                        subclase=res.get("subclase_proceso"),
-                        ubicacion=res.get("ubicacion"),
-                        fecha_ultima_actuacion=fecha_db,
-                        snapshot_consulta=res.get("response_json") if isinstance(res.get("response_json"), str) else (json.dumps(res.get("response_json")) if res.get("response_json") is not None else None),
-                        snapshot_detalle=res.get("detalle_json") if isinstance(res.get("detalle_json"), str) else (json.dumps(res.get("detalle_json")) if res.get("detalle_json") is not None else None)
-                    )
-                    db.add(new_sp)
-                    db.commit()
-                    db.refresh(new_sp)
-                    target_saved = new_sp
-            except Exception as e:
-                print(f"ERROR: Failed to upsert SavedProcess for radicado {radicado}: {e}")
-                return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
-        else:
-            return JSONResponse(status_code=400, content={"status":"error", "detail":"Provide savedProcessId or radicado"})
-    
-        # At this point we have target_saved (or will create an unlinked ProjectCase with radicado)
-        try:
-            # Avoid duplicates
-            if target_saved:
-                existing_pc = db.query(ProjectCase).filter_by(project_id=proj.id, saved_process_id=target_saved.id).first()
-                if existing_pc:
-                    return JSONResponse(status_code=200, content={"status":"OK", "action":"exists", "caseId": existing_pc.id})
-                pc = ProjectCase(project_id=proj.id, saved_process_id=target_saved.id, radicado=target_saved.radicado)
-                db.add(pc)
-                proj.total_cases = (proj.total_cases or 0) + 1
-                proj.updated_at = datetime.datetime.utcnow()
-                db.commit()
-                db.refresh(pc)
-                db.refresh(proj)
-                return JSONResponse(status_code=201, content={"status":"OK", "case": {"id": pc.id, "radicado": pc.radicado, "savedProcessId": target_saved.id}})
-            else:
-                # create fallback case with radicado only
-                existing_pc = db.query(ProjectCase).filter_by(project_id=proj.id, radicado=radicado).first()
-                if existing_pc:
-                    return JSONResponse(status_code=200, content={"status":"OK", "action":"exists", "caseId": existing_pc.id})
-                pc = ProjectCase(project_id=proj.id, saved_process_id=None, radicado=radicado)
-                db.add(pc)
-                proj.total_cases = (proj.total_cases or 0) + 1
-                proj.updated_at = datetime.datetime.utcnow()
-                db.commit()
-                db.refresh(pc)
-                db.refresh(proj)
-                return JSONResponse(status_code=201, content={"status":"OK", "case": {"id": pc.id, "radicado": pc.radicado, "savedProcessId": None}})
-        except Exception as e:
-            print(f"ERROR: Failed to create ProjectCase for project {proj.id}: {e}")
-            return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
+def add_project_case(
+    project_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    proj = _get_owned_project(db, user.id, project_id)
+
+    saved_id = payload.get("savedProcessId")
+    radicado = payload.get("radicado")
+
+    if not saved_id and not radicado:
+        raise HTTPException(status_code=400, detail="Debe enviar savedProcessId o radicado")
+
+    pc = None
+    if saved_id:
+        # unique by (project_id, saved_process_id)
+        pc = (
+            db.query(ProjectCase)
+            .filter(ProjectCase.project_id == project_id, ProjectCase.saved_process_id == saved_id)
+            .first()
+        )
+        if not pc:
+            pc = ProjectCase(project_id=project_id, saved_process_id=saved_id)
+            db.add(pc)
+    else:
+        # unique by (project_id, radicado)
+        pc = (
+            db.query(ProjectCase)
+            .filter(ProjectCase.project_id == project_id, ProjectCase.radicado == radicado)
+            .first()
+        )
+        if not pc:
+            pc = ProjectCase(project_id=project_id, radicado=radicado)
+            db.add(pc)
+
+    proj.total_cases = (proj.total_cases or 0) + (0 if pc.id else 1)
+    db.commit()
+    db.refresh(pc)
+    return {"status": "OK", "case": {"id": pc.id}}
 
 @app.delete("/api/projects/{project_id}/cases/{case_id}")
-async def api_delete_project_case(project_id: int, case_id: int, current_user = Depends(get_current_user), db = Depends(get_db)):
-    if not DB_AVAILABLE or Session is None or Project is None or ProjectCase is None or db is None:
-        return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - projects disabled"})
-    try:
-        proj = db.query(Project).filter_by(id=project_id, user_id=current_user.id).first()
-        if not proj:
-            return JSONResponse(status_code=404, content={"status":"error", "detail":"Project not found"})
-        pc = db.query(ProjectCase).filter_by(id=case_id, project_id=proj.id).first()
-        if not pc:
-            return JSONResponse(status_code=404, content={"status":"error", "detail":"Case not found in project"})
-        db.delete(pc)
-        proj.total_cases = max(0, (proj.total_cases or 1) - 1)
-        proj.updated_at = datetime.datetime.utcnow()
-        db.commit()
-        return {"status":"OK", "deletedId": case_id}
-    except Exception as e:
-        print(f"ERROR: Failed to delete project case {case_id} for project {project_id}: {e}")
-        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Database error: {str(e)}"})
+def delete_project_case(
+    project_id: int,
+    case_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _get_owned_project(db, user.id, project_id)
+    pc = (
+        db.query(ProjectCase)
+        .join(Project, ProjectCase.project_id == Project.id)
+        .filter(Project.id == project_id, Project.user_id == user.id, ProjectCase.id == case_id)
+        .first()
+    )
+    if not pc:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado en el proyecto")
+    db.delete(pc)
 
-async def _refresh_cases_list(project_cases, db, client_ip, user_agent):
-    """
-    Helper to refresh a list of ProjectCase rows and return per-row diffs.
-    """
-    checked = 0
-    updated = 0
-    rows = []
-    errors = []
-    for pc in project_cases:
-        checked += 1
-        rad = None
-        if pc.saved_process:
-            rad = pc.saved_process.radicado
-        else:
-            rad = pc.radicado
-        try:
-            res = await process_single_judicial_query(rad, db=None, user_id=None, ip_address=client_ip, user_agent=user_agent)
-        except Exception as e:
-            errors.append({"caseId": pc.id, "radicado": rad, "error": f"Exception during fetch: {str(e)}"})
-            rows.append({"caseId": pc.id, "radicado": rad, "changedFields": []})
-            continue
-        if not isinstance(res, dict) or not res.get("success"):
-            errors.append({"caseId": pc.id, "radicado": rad, "error": res.get("error", "No data")})
-            rows.append({"caseId": pc.id, "radicado": rad, "changedFields": []})
-            continue
-        # Build new dict from response
-        new_row = {
-            "demandante": res.get("demandante") or "",
-            "demandado": res.get("demandado") or "",
-            "juzgado": res.get("despacho") or "",
-            "clase": res.get("clase_proceso") or "",
-            "subclase": res.get("subclase_proceso") or "",
-            "ubicacion": res.get("ubicacion") or "",
-            "fechaUltimaActuacion": to_ddmmyyyy(res.get("fecha_ultima_actuacion"))
-        }
-        # Read old values from linked saved_process if present
-        if pc.saved_process:
-            s = pc.saved_process
-            old_row = {
-                "demandante": s.demandante or "",
-                "demandado": s.demandado or "",
-                "juzgado": s.juzgado or "",
-                "clase": s.clase or "",
-                "subclase": s.subclase or "",
-                "ubicacion": s.ubicacion or "",
-                "fechaUltimaActuacion": to_ddmmyyyy(s.fecha_ultima_actuacion)
-            }
-        else:
-            old_row = {
-                "demandante": "",
-                "demandado": "",
-                "juzgado": "",
-                "clase": "",
-                "subclase": "",
-                "ubicacion": "",
-                "fechaUltimaActuacion": "N/A"
-            }
-        changed_fields, before_vals, after_vals = diff_rows(old_row, new_row)
-        if changed_fields:
-            # Apply updates to saved_process if linked; otherwise create/update SavedProcess then link
-            try:
-                if pc.saved_process:
-                    s = pc.saved_process
-                    s.demandante = new_row.get("demandante") or s.demandante
-                    s.demandado = new_row.get("demandado") or s.demandado
-                    s.juzgado = new_row.get("juzgado") or s.juzgado
-                    s.clase = new_row.get("clase") or s.clase
-                    s.subclase = new_row.get("subclase") or s.subclase
-                    s.ubicacion = new_row.get("ubicacion") or s.ubicacion
-                    # parse fecha
-                    try:
-                        fu = res.get("fecha_ultima_actuacion")
-                        if fu:
-                            if isinstance(fu, (datetime.date, datetime.datetime)):
-                                parsed_date = fu if isinstance(fu, datetime.date) else fu.date()
-                            else:
-                                try:
-                                    parsed_date = datetime.datetime.fromisoformat(str(fu).replace("Z", "+00:00")).date()
-                                except:
-                                    try:
-                                        parsed_date = datetime.datetime.strptime(str(fu), "%d/%m/%Y").date()
-                                    except:
-                                        parsed_date = None
-                            if parsed_date:
-                                s.fecha_ultima_actuacion = parsed_date
-                    except:
-                        pass
-                    # update snapshots if present
-                    if res.get("response_json") is not None:
-                        s.snapshot_consulta = res.get("response_json") if isinstance(res.get("response_json"), str) else json.dumps(res.get("response_json"))
-                    if res.get("detalle_json") is not None:
-                        s.snapshot_detalle = res.get("detalle_json") if isinstance(res.get("detalle_json"), str) else json.dumps(res.get("detalle_json"))
-                    s.updated_at = datetime.datetime.utcnow()
-                    db.commit()
-                else:
-                    # create new SavedProcess and link
-                    fecha_db = None
-                    fu = res.get("fecha_ultima_actuacion")
-                    if fu:
-                        try:
-                            fecha_db = fu if isinstance(fu, datetime.date) else (datetime.datetime.fromisoformat(str(fu).replace("Z", "+00:00")).date() if isinstance(fu,str) else None)
-                        except:
-                            fecha_db = None
-                    new_sp = SavedProcess(
-                        user_id=pc.project.user_id,
-                        radicado=rad,
-                        id_proceso=str(res.get("id_proceso")) if res.get("id_proceso") else None,
-                        demandante=res.get("demandante"),
-                        demandado=res.get("demandado"),
-                        juzgado=res.get("despacho"),
-                        clase=res.get("clase_proceso"),
-                        subclase=res.get("subclase_proceso"),
-                        ubicacion=res.get("ubicacion"),
-                        fecha_ultima_actuacion=fecha_db,
-                        snapshot_consulta=res.get("response_json") if isinstance(res.get("response_json"), str) else (json.dumps(res.get("response_json")) if res.get("response_json") is not None else None),
-                        snapshot_detalle=res.get("detalle_json") if isinstance(res.get("detalle_json"), str) else (json.dumps(res.get("detalle_json")) if res.get("detalle_json") is not None else None)
-                    )
-                    db.add(new_sp)
-                    db.commit()
-                    db.refresh(new_sp)
-                    pc.saved_process_id = new_sp.id
-                    db.commit()
-                updated += 1
-                rows.append({"caseId": pc.id, "changedFields": changed_fields, "before": before_vals, "after": after_vals})
-            except Exception as e:
-                print(f"ERROR: Failed to update saved process during project refresh for case {pc.id}: {e}")
-                errors.append({"caseId": pc.id, "radicado": rad, "error": f"DB update failed: {str(e)}"})
-                rows.append({"caseId": pc.id, "changedFields": []})
-        else:
-            rows.append({"caseId": pc.id, "changedFields": []})
-    return checked, updated, rows, errors
+    # keep total_cases in sync (defensive)
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj and proj.total_cases and proj.total_cases > 0:
+        proj.total_cases = proj.total_cases - 1
+
+    db.commit()
+    return {"status": "OK"}
+
+@app.post("/api/projects/{project_id}/refresh")
+def refresh_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    proj = _get_owned_project(db, user.id, project_id)
+    pcs = (
+        db.query(ProjectCase)
+        .join(Project, ProjectCase.project_id == Project.id)
+        .filter(Project.id == project_id, Project.user_id == user.id)
+        .all()
+    )
+    result = _refresh_cases_list(db, pcs)  # reuse your existing normalization/batch logic
+    proj.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"status": "OK", **result}
+
+@app.post("/api/projects/{project_id}/refresh-selected")
+def refresh_project_selected(
+    project_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _get_owned_project(db, user.id, project_id)
+    ids = payload.get("caseIds") or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="Envía caseIds")
+
+    pcs = (
+        db.query(ProjectCase)
+        .join(Project, ProjectCase.project_id == Project.id)
+        .filter(Project.id == project_id, Project.user_id == user.id, ProjectCase.id.in_(ids))
+        .all()
+    )
+    result = _refresh_cases_list(db, pcs)
+    db.commit()
+    return {"status": "OK", **result}
+
+# --- end of project cases endpoints ---
 
 @app.post("/api/projects/{project_id}/refresh")
 async def api_refresh_project(project_id: int, current_user = Depends(get_current_user), db = Depends(get_db), request: Request = None):
