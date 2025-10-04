@@ -27,7 +27,7 @@ DB_AVAILABLE = True
 try:
     from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey, UniqueConstraint
     from sqlalchemy.ext.declarative import declarative_base
-    from sqlalchemy.orm import sessionmaker, relationship
+    from sqlalchemy.orm import sessionmaker, relationship, Session
     Base = declarative_base()
 except Exception as e:
     print(f"WARNING: SQLAlchemy import failed - running without DB. Error: {e}")
@@ -80,11 +80,13 @@ class ProcessResponse(BaseModel):
 # Railway will provide a DATABASE_URL for the managed Postgres instance.
 DB_URL = os.getenv('DATABASE_URL')
 engine = None
+SessionLocal = None
 Session = None
-
+ 
 if DB_AVAILABLE and DB_URL:
     try:
-        engine = create_engine(DB_URL, echo=True, pool_size=5, max_overflow=10)
+        # Use pool_pre_ping and future flag for better resiliency
+        engine = create_engine(DB_URL, echo=True, pool_pre_ping=True, future=True)
         print("Database connection successful!")
     except Exception as e:
         print(f"Database connection failed: {e}")
@@ -94,9 +96,12 @@ else:
         print("DB not available in this Python environment - running without database")
     else:
         print("No DATABASE_URL found - running without database")
-
+ 
 if engine and sessionmaker and Base:
-    Session = sessionmaker(bind=engine)
+    # Create a session factory bound to the engine
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    # Keep a fallback name `Session` for existing code that calls Session()
+    Session = SessionLocal
 
     # Define ORM models only when engine is available
     class User(Base):
@@ -273,13 +278,15 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise credentials_exception
 
 def get_db():
-    if engine:
-        db = Session()
+    """Request-scoped database session dependency."""
+    if SessionLocal:
+        db = SessionLocal()
         try:
             yield db
         finally:
             db.close()
     else:
+        # No DB available in this environment
         yield None
 
 # Logging helper function
