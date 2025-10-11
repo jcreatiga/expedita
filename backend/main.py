@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 import datetime
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -14,7 +16,6 @@ import requests
 import asyncio
 import time
 import uuid
-from fastapi import Request
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -258,23 +259,29 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
+        # Ensure credentials present
+        if not credentials or not getattr(credentials, "credentials", None):
+            raise credentials_exception
+
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
-        token_data = TokenData(email=email)
-    except JWTError:
-        raise credentials_exception
 
-    # Get user from database
-    if engine:
-        session = Session()
-        user = get_user_by_email(session, email)
-        session.close()
-        if user is None:
+        # Get user from database if available
+        if engine:
+            session = Session()
+            try:
+                user = get_user_by_email(session, email)
+            finally:
+                session.close()
+            if user is None:
+                raise credentials_exception
+            return user
+        else:
             raise credentials_exception
-        return user
-    else:
+    except (JWTError, Exception):
+        # Any error decoding token or accessing DB should be treated as unauthorized
         raise credentials_exception
 
 def get_db():
@@ -387,6 +394,14 @@ def diff_rows(old: dict, new: dict):
 
 app = FastAPI(title="Sistema de Consulta Judicial", version="2.0.0")
 
+# Mount static files if directory exists (makes /static/styles.css available)
+BASE_DIR = Path(__file__).parent
+STATIC_DIR = BASE_DIR / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+else:
+    print(f"[WARN] Static dir not found: {STATIC_DIR} — skipping /static mount")
+
 # Add rate limiting middleware
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -402,10 +417,15 @@ app.add_middleware(
 
 
 # Authentication helper functions
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception as e:
+        # Avoid 500 when bcrypt/passlib internals fail; treat as verification failure
+        print(f"Password verification error: {e}")
+        return False
 
-def get_password_hash(password):
+def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 def create_access_token(data: dict):
@@ -1514,6 +1534,7 @@ async def register_user(user: UserCreate, db = Depends(get_db)):
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
+@limiter.exempt
 @app.post("/auth/login", response_model=Token)
 async def login_user(user: UserLogin, db = Depends(get_db)):
     if not db:
@@ -1530,6 +1551,7 @@ async def login_user(user: UserLogin, db = Depends(get_db)):
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
+@limiter.exempt
 @app.get("/auth/me")
 async def read_users_me(current_user = Depends(get_current_user)):
     return {"email": current_user.email, "id": current_user.id}
