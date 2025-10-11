@@ -13,6 +13,9 @@ from typing import Optional, List
 import os
 import json
 import requests
+import urllib3
+# Suppress InsecureRequestWarning for external API calls that use verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import asyncio
 import time
 import uuid
@@ -419,6 +422,11 @@ app.add_middleware(
 # Authentication helper functions
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
+        # Bcrypt only uses the first 72 bytes of the password. Truncate for verification to avoid mismatches
+        if isinstance(plain_password, str) and len(plain_password.encode("utf-8")) > 72:
+            truncated = plain_password.encode("utf-8")[:72]
+            # decode back to string ignoring incomplete chars
+            plain_password = truncated.decode("utf-8", errors="ignore")
         return pwd_context.verify(plain_password, hashed_password)
     except Exception as e:
         # Avoid 500 when bcrypt/passlib internals fail; treat as verification failure
@@ -426,7 +434,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    # Bcrypt accepts up to 72 bytes. Validate and reject longer passwords to avoid silent truncation during hash.
+    if not isinstance(password, str):
+        raise ValueError("Password must be a string")
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("Password cannot exceed 72 bytes when using bcrypt")
+    try:
+        return pwd_context.hash(password)
+    except Exception as e:
+        # Surface hashing problems as ValueError so callers can return 4xx instead of 500
+        raise ValueError(f"Hashing error: {e}")
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -1523,8 +1540,23 @@ async def register_user(user: UserCreate, db = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Create new user
-    hashed_password = get_password_hash(user.password)
+    # Validate password policy: minimum length and bcrypt byte limit
+    pw_bytes = user.password.encode("utf-8") if isinstance(user.password, str) else None
+    if not pw_bytes or len(pw_bytes) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if len(pw_bytes) > 72:
+        raise HTTPException(status_code=400, detail="Password cannot exceed 72 bytes for bcrypt")
+
+    # Create new user with safe hashing
+    try:
+        hashed_password = get_password_hash(user.password)
+    except ValueError as e:
+        # Return 400 for hashing-related validation/errors instead of 500
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Defensive: unexpected error during hashing
+        raise HTTPException(status_code=400, detail=f"Password hashing failed: {e}")
+
     db_user = User(email=user.email, password_hash=hashed_password)
     db.add(db_user)
     db.commit()
