@@ -9,7 +9,7 @@ from selenium.webdriver.common.by import By
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 import os
 import json
 import requests
@@ -255,7 +255,7 @@ def authenticate_user(db, email: str, password: str):
         return False
     return user
 
-def _extract_token_from_header(request: Request) -> str | None:
+def _extract_token_from_header(request: Request) -> Optional[str]:
     auth = request.headers.get("authorization") or request.headers.get("Authorization") or ""
     if not auth:
         return None
@@ -264,10 +264,10 @@ def _extract_token_from_header(request: Request) -> str | None:
         return auth.split(" ", 1)[1].strip()
     return auth.strip()
 
-def _extract_token_from_cookie(request: Request) -> str | None:
+def _extract_token_from_cookie(request: Request) -> Optional[str]:
     return request.cookies.get("access_token")
 
-def get_bearer_token(request: Request) -> str | None:
+def get_bearer_token(request: Request) -> Optional[str]:
     # Priority: header, then cookie. Normalize "Bearer ..." in either.
     token = _extract_token_from_header(request)
     if token:
@@ -281,6 +281,18 @@ def get_bearer_token(request: Request) -> str | None:
         return token
     print("DEBUG: get_bearer_token: no token found")
     return None
+
+def get_db():
+    """Request-scoped database session dependency."""
+    if SessionLocal:
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+    else:
+        # No DB available in this environment
+        yield None
 
 async def get_current_user(request: Request, db = Depends(get_db)):
     """
@@ -302,7 +314,7 @@ async def get_current_user(request: Request, db = Depends(get_db)):
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str | None = payload.get("sub")
+        email: Optional[str] = payload.get("sub")
         if not email:
             print("DEBUG: get_current_user: token payload missing sub")
             raise credentials_exception
