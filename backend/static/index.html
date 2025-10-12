@@ -708,25 +708,28 @@
 
         // Table with correct columns (responsive: horizontal scroll on small screens, full-width on desktop)
         const tableHtml = `
-            <div id="results-wrapper" class="overflow-x-auto -mx-2 lg:mx-0 rounded-xl border border-white/5 bg-neutral-900/40 results-full">
-                <table id="results-table" class="w-full min-w-[1200px] lg:min-w-0 table-fixed lg:table-auto" role="table" aria-label="Resultados de consulta de procesos judiciales">
-                    <thead class="bg-neutral-900/60 supports-[backdrop-filter]:bg-neutral-900/40">
-                        <tr>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left w-56 md:w-64 lg:w-72" scope="col" onclick="sortTable('radicado')" style="cursor:pointer;" aria-sort="none">Radicado</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandante')" style="cursor:pointer;" aria-sort="none">Demandante</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandado')" style="cursor:pointer;" aria-sort="none">Demandado</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('juzgado')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('clase')" style="cursor:pointer;" aria-sort="none">Clase</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('subclase')" style="cursor:pointer;" aria-sort="none">Subclase</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('ubicacion')" style="cursor:pointer;" aria-sort="none">Ubicación</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col">Última actuación</th>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-right" scope="col">Guardar</th>
-                        </tr>
-                    </thead>
-                    <tbody id="results-tbody">
-                    </tbody>
-                </table>
+            <div class="table-wrap results-full">
+              <div id="results-wrapper" class="overflow-x-auto -mx-2 lg:mx-0 rounded-xl border border-white/5 bg-neutral-900/40 results-full">
+                  <table id="results-table" class="results-table w-full min-w-[1200px] lg:min-w-0 table-fixed lg:table-auto" role="table" aria-label="Resultados de consulta de procesos judiciales">
+                      <thead class="bg-neutral-900/60 supports-[backdrop-filter]:bg-neutral-900/40">
+                          <tr>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left w-56 md:w-64 lg:w-72" scope="col" onclick="sortTable('radicado')" style="cursor:pointer;" aria-sort="none">Radicado</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandante')" style="cursor:pointer;" aria-sort="none">Demandante</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandado')" style="cursor:pointer;" aria-sort="none">Demandado</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('juzgado')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('clase')" style="cursor:pointer;" aria-sort="none">Clase</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('subclase')" style="cursor:pointer;" aria-sort="none">Subclase</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('ubicacion')" style="cursor:pointer;" aria-sort="none">Ubicación</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col">Última actuación</th>
+                              <th class="px-3 py-2 sticky top-0 z-10 text-right" scope="col">Guardar</th>
+                          </tr>
+                      </thead>
+                      <tbody id="results-tbody">
+                      </tbody>
+                  </table>
+              </div>
             </div>
+            <div id="results-cards" class="results-cards hidden" aria-live="polite"></div>
             <div id="pagination-controls" class="flex justify-center items-center gap-2 mt-4"></div>
         `;
 
@@ -738,7 +741,87 @@
         currentPage = 1;
         pageSize = parseInt(document.getElementById('table-page-size').value) || 25;
         renderTablePage();
+        // Ensure cards are synced on render and on resize
+        syncTableToCards();
     }
+ 
+    // Build mobile cards from current page results and toggle visibility
+    function syncTableToCards() {
+        const cardsElId = 'results-cards';
+        let cardsEl = document.getElementById(cardsElId);
+        const container = document.getElementById('query-result');
+        if (!cardsEl) {
+            cardsEl = document.createElement('div');
+            cardsEl.id = cardsElId;
+            cardsEl.className = 'results-cards hidden';
+            // Insert after the table wrapper (pagination-controls sits after it)
+            const pagination = document.getElementById('pagination-controls');
+            if (pagination && pagination.parentElement) {
+                pagination.parentElement.insertBefore(cardsEl, pagination);
+            } else {
+                container.appendChild(cardsEl);
+            }
+        }
+ 
+        const isMobile = window.innerWidth <= 767;
+        // Show cards on mobile, hide otherwise
+        if (!isMobile) {
+            cardsEl.classList.add('hidden');
+            document.querySelectorAll('.table-wrap, #results-wrapper').forEach(el => el && (el.style.display = 'block'));
+            return;
+        }
+ 
+        // Hide the table wrappers on mobile
+        document.querySelectorAll('.table-wrap, #results-wrapper').forEach(el => el && (el.style.display = 'none'));
+        cardsEl.classList.remove('hidden');
+ 
+        // Build cards for the current page
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        const pageResults = filteredResults.slice(startIndex, endIndex);
+ 
+        cardsEl.innerHTML = pageResults.map(proc => {
+            const rad = escapeHtml(proc.radicado || '');
+            const dem = escapeHtml(proc.demandante || '');
+            const ded = escapeHtml(proc.demandado || '');
+            const juz = escapeHtml(proc.juzgado || '');
+            const cla = escapeHtml(proc.clase || '');
+            const sub = escapeHtml(proc.subclase || '');
+            const ubi = escapeHtml(proc.ubicacion || '');
+            const fecha = escapeHtml(normalizaFecha(proc.fechaUltimaActuacion));
+            const encodedProc = encodeURIComponent(JSON.stringify(proc));
+            return `
+                <article class="result-card" role="article" aria-labelledby="radicado-${rad}">
+                    <div class="top">
+                        <div class="radicado nowrap-token ellipsis" id="radicado-${rad}" title="${rad}">${rad}</div>
+                        <div>
+                            ${proc.error ? `<span class="text-red-500 text-xs">${escapeHtml(proc.error)}</span>` : `
+                                <button aria-label="Guardar" class="btn-guardar inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-primary whitespace-nowrap" onclick="saveProcess(this, '${rad}', '${encodedProc}')">
+                                    <span class="material-icons text-sm icon" aria-hidden="true">bookmark_add</span>
+                                    <span class="label hidden md:inline">Guardar</span>
+                                </button>
+                            `}
+                        </div>
+                    </div>
+                    <div class="row"><div class="label">Demandante</div><div class="value">${dem}</div></div>
+                    <div class="row"><div class="label">Demandado</div><div class="value">${ded}</div></div>
+                    <div class="row"><div class="label">Juzgado</div><div class="value nowrap-token">${juz}</div></div>
+                    <div class="row"><div class="label">Clase / Subclase</div><div class="value">${cla} / ${sub}</div></div>
+                    <div class="row"><div class="label">Ubicación</div><div class="value nowrap-token">${ubi}</div></div>
+                    <div class="row"><div class="label">Última actuación</div><div class="value">${fecha}</div></div>
+                </article>
+            `;
+        }).join('');
+    }
+ 
+    // Debounced resize to update cards/table toggle
+    let _resizeTimer = null;
+    window.addEventListener('resize', () => {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => {
+            syncTableToCards();
+        }, 120);
+    });
 
     // Filter table based on input
     function filterTable() {
@@ -787,21 +870,21 @@
             // Build row with tooltip on radicado and title attributes for truncated cells
             const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
-                <th class="px-3 py-2 w-56 md:w-64 lg:w-72 font-medium text-text-light dark:text-text-dark whitespace-nowrap font-mono tracking-tight truncate lg:truncate-none lg:overflow-visible" scope="row" title="${escapeHtml(proc.radicado)}">
+                <th class="px-3 py-2 w-56 md:w-64 lg:w-72 col-radicado nowrap-token ellipsis font-medium text-text-light dark:text-text-dark" scope="row" title="${escapeHtml(proc.radicado)}">
                     ${escapeHtml(proc.radicado)}
                 </th>
                 <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(demandante)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(demandante)}</span></td>
                 <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(demandado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(demandado)}</span></td>
-                <td class="px-3 py-2 whitespace-nowrap break-keep sm:truncate" title="${escapeHtml(juzgado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(juzgado)}</span></td>
+                <td class="px-3 py-2 nowrap-token no-break sm-truncate" title="${escapeHtml(juzgado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(juzgado)}</span></td>
                 <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(clase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(clase)}</span></td>
-                <td class="px-3 py-2 whitespace-nowrap break-keep sm:truncate" title="${escapeHtml(subclase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(subclase)}</span></td>
-                <td class="px-3 py-2 whitespace-nowrap break-keep sm:truncate" title="${escapeHtml(ubicacion)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(ubicacion)}</span></td>
+                <td class="px-3 py-2 nowrap-token no-break sm-truncate" title="${escapeHtml(subclase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(subclase)}</span></td>
+                <td class="px-3 py-2 nowrap-token no-break sm-truncate" title="${escapeHtml(ubicacion)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(ubicacion)}</span></td>
                 <td class="px-3 py-2">${escapeHtml(fecha)}</td>
                 <td class="px-3 py-2 text-right w-28 md:w-32 lg:w-36">
                     ${proc.error ? `<span class="text-red-500 text-xs">${proc.error}</span>` : `
-                    <button aria-label="Guardar" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-primary hover:underline whitespace-nowrap" onclick="saveProcess(this, '${proc.radicado}', '${encodedProc}')">
-                        <span class="material-icons text-sm" aria-hidden="true">bookmark_add</span>
-                        <span class="hidden md:inline">Guardar</span>
+                    <button aria-label="Guardar" class="btn-guardar inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-primary hover:underline whitespace-nowrap" onclick="saveProcess(this, '${proc.radicado}', '${encodedProc}')">
+                        <span class="material-icons text-sm icon" aria-hidden="true">bookmark_add</span>
+                        <span class="label hidden md:inline">Guardar</span>
                     </button>
                     `}
                 </td>
