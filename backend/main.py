@@ -255,53 +255,80 @@ def authenticate_user(db, email: str, password: str):
         return False
     return user
 
-async def get_current_user(request: Request):
+def _extract_token_from_header(request: Request) -> str | None:
+    auth = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+    if not auth:
+        return None
+    # If header is "Bearer <token>" return token, otherwise return raw value
+    if isinstance(auth, str) and auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return auth.strip()
+
+def _extract_token_from_cookie(request: Request) -> str | None:
+    return request.cookies.get("access_token")
+
+def get_bearer_token(request: Request) -> str | None:
+    # Priority: header, then cookie. Normalize "Bearer ..." in either.
+    token = _extract_token_from_header(request)
+    if token:
+        print("DEBUG: get_bearer_token: token found in header")
+        return token
+    token = _extract_token_from_cookie(request)
+    if token:
+        if isinstance(token, str) and token.lower().startswith("bearer "):
+            token = token.split(" ",1)[1].strip()
+        print("DEBUG: get_bearer_token: token found in cookie")
+        return token
+    print("DEBUG: get_bearer_token: no token found")
+    return None
+
+async def get_current_user(request: Request, db = Depends(get_db)):
     """
-    Accept token from Authorization: Bearer <token> OR from cookie 'access_token'.
-    Returns the User or raises 401.
+    Robust current user dependency.
+    Accepts token from Authorization header or access_token cookie.
+    Always returns HTTP 401 on missing/invalid/expired token (never 500).
+    Uses the request-scoped DB session provided by get_db.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Not authenticated",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # Try Authorization header first
-    auth_header = request.headers.get("authorization") or request.headers.get("Authorization") or ""
-    token = None
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-
-    # If no header token, try cookie
+    token = get_bearer_token(request)
     if not token:
-        token = request.cookies.get("access_token")
-
-    if not token:
+        print("DEBUG: get_current_user: no token provided")
         raise credentials_exception
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
+        email: str | None = payload.get("sub")
+        if not email:
+            print("DEBUG: get_current_user: token payload missing sub")
             raise credentials_exception
     except JWTError:
+        print("DEBUG: get_current_user: JWT decode/validation failed")
         raise credentials_exception
-    except Exception:
-        # Any other error treat as unauthorized
+    except Exception as e:
+        print(f"DEBUG: get_current_user: unexpected token error: {e}")
         raise credentials_exception
 
-    # Get user from database
-    if engine:
-        session = Session()
-        try:
-            user = get_user_by_email(session, email)
-        finally:
-            session.close()
-        if user is None:
-            raise credentials_exception
-        return user
-    else:
+    # Ensure DB session is available
+    if not db:
+        print("DEBUG: get_current_user: no db available")
         raise credentials_exception
+
+    try:
+        user = db.query(User).filter(User.email == email).first()
+    except Exception as e:
+        print(f"DEBUG: get_current_user: DB query error: {e}")
+        raise credentials_exception
+
+    if not user:
+        print("DEBUG: get_current_user: user not found for email:", email)
+        raise credentials_exception
+
+    return user
 
 def get_db():
     """Request-scoped database session dependency."""
@@ -1553,6 +1580,7 @@ def get_app():
         return {"error": "Frontend file not found"}
 
 # Authentication endpoints
+@limiter.exempt
 @app.post("/auth/register", response_model=Token)
 async def register_user(user: UserCreate, db = Depends(get_db)):
     if not db:
@@ -1591,12 +1619,13 @@ async def register_user(user: UserCreate, db = Depends(get_db)):
 
 @limiter.exempt
 @app.post("/auth/login", response_model=Token)
-async def login_user(user: UserLogin, response: Response, db = Depends(get_db)):
+async def login_user(user: UserLogin, db = Depends(get_db)):
     if not db:
         raise HTTPException(status_code=500, detail="Database not available")
 
     db_user = authenticate_user(db, user.email, user.password)
     if not db_user:
+        print(f"DEBUG: login failed for {user.email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -1604,9 +1633,10 @@ async def login_user(user: UserLogin, response: Response, db = Depends(get_db)):
         )
 
     access_token = create_access_token(data={"sub": user.email})
-    # Set HttpOnly cookie with token (also return token in JSON for header-based flows)
-    max_age_seconds = ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    response.set_cookie(
+    # Return JSONResponse and set HttpOnly cookie (token only, no "Bearer " prefix)
+    resp = JSONResponse({"access_token": access_token, "token_type": "bearer"})
+    max_age_seconds = 86400  # 24 hours
+    resp.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
@@ -1615,29 +1645,24 @@ async def login_user(user: UserLogin, response: Response, db = Depends(get_db)):
         path="/",
         max_age=max_age_seconds,
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    print(f"DEBUG: login success for {user.email}, cookie set (max_age={max_age_seconds})")
+    return resp
 
 @limiter.exempt
 @app.get("/auth/me")
 async def read_users_me(current_user = Depends(get_current_user)):
     return {"email": current_user.email, "id": current_user.id}
 
+@limiter.exempt
 @app.post("/auth/logout")
 async def logout(response: Response):
     """
     Clear the access_token cookie so clients using cookie-based auth are logged out.
     """
-    response.set_cookie(
-        key="access_token",
-        value="",
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
-        max_age=0,
-        expires=0,
-    )
-    return {"detail": "Sesión cerrada"}
+    resp = JSONResponse({"detail": "Sesión cerrada"})
+    resp.delete_cookie("access_token", path="/")
+    print("DEBUG: logout - cleared access_token cookie")
+    return resp
 
 # Logs endpoint for debugging
 @app.get("/logs")
