@@ -125,6 +125,92 @@
         /* Prevent breaking mid-glyph for tokens without spaces (improves readability) */
         .break-keep { word-break: keep-all; }
  
+        /* Utilities for nowrap and ellipsis */
+        .nowrap-token { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+        .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ 
+        /* Guardar button base */
+        .btn-guardar { white-space: nowrap; display:inline-flex; align-items:center; gap:0.5rem; border-radius:8px; padding:6px 10px; border:1px solid rgba(42,50,58,0.2); }
+        .btn-guardar .icon { display:inline-block; }
+        .btn-guardar .label { display:inline; }
+        @media (max-width: 767px) {
+            .btn-guardar .label { display: none; } /* icon-only on mobile */
+        }
+ 
+        /* Card-list styles for mobile */
+        .results-cards { display: none; }
+        @media (max-width: 767px) {
+            .results-table { display: none; }
+            .table-wrap { display: none; }
+            .results-cards {
+                display: grid;
+                gap: 12px;
+                margin-top: 8px;
+            }
+            .result-card {
+                background: rgba(17,20,24,1);
+                border: 1px solid rgba(37,42,49,1);
+                border-radius: 12px;
+                padding: 12px 14px;
+            }
+            /* Header: Radicado + Guardar aligned */
+            .result-card .top{
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                gap:10px;
+                margin-bottom:8px;
+            }
+            .result-card .radicado{
+                font-weight: 700;
+                font-size: 16px;
+                letter-spacing: 0.3px;
+                font-variant-numeric: tabular-nums;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+                color:#e6e8eb;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: calc(100% - 56px);
+            }
+            .result-card .radicado.nowrap-token { white-space: nowrap; }
+            /* Guardar button styles on mobile (icon-only) */
+            .btn-guardar{
+                display:inline-flex;
+                align-items:center;
+                gap:8px;
+                padding:6px 10px;
+                border-radius:8px;
+                border:1px solid #2a323a;
+                background:#0e7a49;
+                color:#fff;
+                line-height:1;
+                white-space:nowrap;
+            }
+            .btn-guardar:hover{ filter: brightness(1.05); }
+            .btn-guardar .icon{ display:inline-block; }
+            .btn-guardar .label{ display:none; } /* icon-only on mobile */
+ 
+            /* Label/Value styling to clearly distinguish fields */
+            .result-card .field{ display:grid; grid-template-columns: 130px 1fr; gap:8px; align-items:start; margin:6px 0; }
+            .result-card .label{
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: .02em;
+                font-size: 12px;
+                color:#98a2b3;
+            }
+            .result-card .value{
+                font-size:14px; color:#e6e8eb;
+                overflow: hidden; text-overflow: ellipsis;
+            }
+        }
+ 
+        /* Tablet/desktop: keep existing behavior; show button text */
+        @media (min-width: 768px){
+            .btn-guardar .label{ display:inline; }
+        }
+ 
         /* Small helper to visually hide table when empty */
         .table-empty { padding: 28px; color: var(--secondary-text-dark); }
  
