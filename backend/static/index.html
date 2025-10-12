@@ -43,14 +43,48 @@
     <style>
         body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 
-        /* Truncate cells with hover-tooltips for long values */
+        /* Responsive table container: allow horizontal scroll when viewport is too small,
+           but let the table expand naturally when there's space. */
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* Make table use available width and layout columns automatically */
+        #results-table {
+            width: 100%;
+            table-layout: auto; /* allow columns to size based on content */
+            border-collapse: collapse;
+            min-width: 0; /* allow cells to shrink within flex containers */
+        }
+
+        /* By default allow cells to wrap (so on wide windows they expand and show full text) */
+        #results-table th,
+        #results-table td {
+            white-space: normal;
+            word-break: break-word;
+        }
+
+        /* Truncate cells with ellipsis only on smaller viewports where space is constrained */
         .truncate-cell {
-            max-width: 200px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
             position: relative;
         }
+
+        @media (max-width: 1024px) {
+            /* On tablets/phones we apply truncation to keep table compact */
+            .truncate-cell {
+                max-width: 200px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .truncate-cell .full-text {
+                display: none;
+            }
+        }
+
+        /* Full-text tooltip shown on hover (desktop) */
         .truncate-cell:hover .full-text {
             display: block;
         }
@@ -728,11 +762,11 @@
 
             const row = document.createElement('tr');
             row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
-
+    
             // Build row with tooltip on radicado
             const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
-                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" scope="row" title="idProceso: ${proc.idProceso || 'N/A'}">
+                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark" scope="row" title="idProceso: ${proc.idProceso || 'N/A'}">
                     ${escapeHtml(proc.radicado)}
                 </th>
                 <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandante)}</span><span class="full-text">${escapeHtml(demandante)}</span></td>
