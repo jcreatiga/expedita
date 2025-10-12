@@ -521,17 +521,22 @@ def create_access_token(data: dict):
     return encoded_jwt
 
 
-from fastapi import Response
+# --- UI versioning / index serving (Python 3.9 compatible) ---
+UI_VERSION = os.getenv("UI_VERSION", datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S"))
 INDEX_PATH = Path("backend/static/index.html")
 
 def _render_index() -> Response:
+    """
+    Return the HTML index with UI_VERSION injected and Cache-Control: no-store.
+    Robust to missing file: falls back to a tiny HTML skeleton.
+    """
     try:
-        html = INDEX_PATH.read_text(encoding="utf-8")
-        html = html.replace("{{UI_VERSION}}", UI_VERSION)
-        headers = {"Cache-Control": "no-store"}
-        return Response(content=html, media_type="text/html; charset=utf-8", headers=headers)
-    except FileNotFoundError:
-        return HTMLResponse(content='{"message":"Frontend not available"}', media_type="application/json")
+        html: str = INDEX_PATH.read_text(encoding="utf-8")
+    except Exception:
+        html = "<!doctype html><meta charset='utf-8'><title>Expedita</title><h1>Expedita</h1>"
+    html = html.replace("{{UI_VERSION}}", UI_VERSION)
+    headers = {"Cache-Control": "no-store"}
+    return Response(content=html, media_type="text/html; charset=utf-8", headers=headers)
 
 @app.get("/", include_in_schema=False)
 def root_html():
@@ -540,6 +545,11 @@ def root_html():
 @app.get("/index.html", include_in_schema=False)
 def root_index_html():
     return _render_index()
+
+@app.get("/healthz", tags=["system"])
+def healthz():
+    return {"status": "ok", "ui_version": UI_VERSION}
+
 
 @app.get("/test")
 def test_endpoint():
@@ -2344,6 +2354,7 @@ async def api_cron_refresh_all(request: Request, db = Depends(get_db)):
         return JSONResponse(status_code=401, content={"status":"error", "detail":"Unauthorized"})
     if not DB_AVAILABLE or Session is None or Project is None or ProjectCase is None or SavedProcess is None or db is None:
         return JSONResponse(status_code=503, content={"status":"error", "detail":"Database not available - projects disabled"})
+
     try:
         # Iterate projects in batches to avoid long-running single transaction
         projects = db.query(Project).order_by(Project.id).all()
@@ -2363,11 +2374,10 @@ async def api_cron_refresh_all(request: Request, db = Depends(get_db)):
             proj.updated_at = datetime.datetime.utcnow()
             db.commit()
         return {"status":"OK", "checked": total_checked, "updated": total_updated, "rows": all_rows, "errors": all_errors}
-        except Exception as e:
-            print(f"ERROR: Cron refresh failed: {e}")
-            return JSONResponse(status_code=500, content={"status":"error", "detail": f"Cron error: {str(e)}"})
-    
-    # Health / version endpoint
-    @app.get("/healthz", tags=["system"])
-    def healthz():
-        return {"status": "ok", "ui_version": UI_VERSION}
+    except Exception as e:
+        print(f"ERROR: Cron refresh failed: {e}")
+        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Cron error: {str(e)}"})
+# Health / version endpoint
+@app.get("/healthz", tags=["system"])
+def healthz():
+    return {"status": "ok", "ui_version": UI_VERSION}
