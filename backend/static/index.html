@@ -50,7 +50,7 @@
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
         }
-
+ 
         /* Make table use available width and layout columns automatically */
         #results-table {
             width: 100%;
@@ -58,19 +58,19 @@
             border-collapse: collapse;
             min-width: 0; /* allow cells to shrink within flex containers */
         }
-
+ 
         /* By default allow cells to wrap (so on wide windows they expand and show full text) */
         #results-table th,
         #results-table td {
             white-space: normal;
             word-break: break-word;
         }
-
+ 
         /* Truncate cells with ellipsis only on smaller viewports where space is constrained */
         .truncate-cell {
             position: relative;
         }
-
+ 
         @media (max-width: 1024px) {
             /* On tablets/phones we apply truncation to keep table compact */
             .truncate-cell {
@@ -82,8 +82,14 @@
             .truncate-cell .full-text {
                 display: none;
             }
+            /* Force small-screen table cells to keep single-line with ellipsis */
+            .sm-truncate {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
         }
-
+ 
         /* Full-text tooltip shown on hover (desktop) */
         .truncate-cell:hover .full-text {
             display: block;
@@ -103,10 +109,22 @@
             max-width: 520px;
             box-shadow: 0 6px 18px rgba(2,6,23,0.7);
         }
-
+ 
+        /* Sticky header and results-wide helper */
+        #results-wrapper thead th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            background-color: rgba(255,255,255,0.03);
+            background-clip: padding-box;
+        }
+        .results-full { max-width: none !important; width: 100% !important; }
+ 
         /* Small helper to visually hide table when empty */
         .table-empty { padding: 28px; color: var(--secondary-text-dark); }
-
+ 
         /* Debug panel for showing backend responses */
         #debug-panel {
             margin-top: 18px;
@@ -239,13 +257,13 @@
             </div>
             </section>
 
-            <div class="mt-12">
-                <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Resultados</h2>
-                <div id="query-result">
-                    <!-- Table and controls will be rendered here by JavaScript -->
-                    <div class="table-loading">Cargando resultados...</div>
-                </div>
-            </div>
+<section id="resultados" class="w-full max-w-none mt-12 results-full">
+    <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Resultados</h2>
+    <div id="query-result" class="w-full max-w-none">
+        <!-- Table and controls will be rendered here by JavaScript -->
+        <div class="table-loading">Cargando resultados...</div>
+    </div>
+</section>
         </main>
     </div>
 </div>
@@ -685,28 +703,28 @@
             </div>
         `;
 
-        // Table with correct columns
+        // Table with correct columns (responsive: horizontal scroll on small screens, full-width on desktop)
         const tableHtml = `
-            <div class="table-container">
-                <table id="results-table" role="table" aria-label="Resultados de consulta de procesos judiciales">
-                    <thead>
+            <div id="results-wrapper" class="overflow-x-auto -mx-2 lg:mx-0 rounded-xl border border-white/5 bg-neutral-900/40 results-full">
+                <table id="results-table" class="w-full min-w-[1200px] lg:min-w-0 table-fixed lg:table-auto" role="table" aria-label="Resultados de consulta de procesos judiciales">
+                    <thead class="bg-neutral-900/60 supports-[backdrop-filter]:bg-neutral-900/40">
                         <tr>
-                            <th scope="col" onclick="sortTable('radicado')" style="cursor:pointer;" aria-sort="none">Radicado</th>
-                            <th scope="col" onclick="sortTable('demandante')" style="cursor:pointer;" aria-sort="none">Demandante</th>
-                            <th scope="col" onclick="sortTable('demandado')" style="cursor:pointer;" aria-sort="none">Demandado</th>
-                            <th scope="col" onclick="sortTable('juzgado')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
-                            <th scope="col" onclick="sortTable('clase')" style="cursor:pointer;" aria-sort="none">Clase</th>
-                            <th scope="col" onclick="sortTable('subclase')" style="cursor:pointer;" aria-sort="none">Subclase</th>
-                            <th scope="col" onclick="sortTable('ubicacion')" style="cursor:pointer;" aria-sort="none">Ubicación</th>
-                            <th scope="col">Última actuación</th>
-                            <th scope="col">Guardar</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('radicado')" style="cursor:pointer;" aria-sort="none">Radicado</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandante')" style="cursor:pointer;" aria-sort="none">Demandante</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandado')" style="cursor:pointer;" aria-sort="none">Demandado</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('juzgado')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('clase')" style="cursor:pointer;" aria-sort="none">Clase</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('subclase')" style="cursor:pointer;" aria-sort="none">Subclase</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('ubicacion')" style="cursor:pointer;" aria-sort="none">Ubicación</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col">Última actuación</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-right" scope="col">Guardar</th>
                         </tr>
                     </thead>
                     <tbody id="results-tbody">
                     </tbody>
                 </table>
-                <div id="pagination-controls" class="flex justify-center items-center gap-2 mt-4"></div>
             </div>
+            <div id="pagination-controls" class="flex justify-center items-center gap-2 mt-4"></div>
         `;
 
         container.innerHTML = controlsHtml + tableHtml;
@@ -763,20 +781,20 @@
             const row = document.createElement('tr');
             row.className = 'border-b dark:border-gray-700 hover:bg-background-light dark:hover:bg-background-dark transition-colors duration-200';
     
-            // Build row with tooltip on radicado
+            // Build row with tooltip on radicado and title attributes for truncated cells
             const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
-                <th class="px-6 py-4 font-medium text-text-light dark:text-text-dark" scope="row" title="idProceso: ${proc.idProceso || 'N/A'}">
-                    ${escapeHtml(proc.radicado)}
+                <th class="px-3 py-2 font-medium text-text-light dark:text-text-dark sm-truncate lg:whitespace-normal lg:break-words" scope="row" title="idProceso: ${proc.idProceso || 'N/A'} | ${escapeHtml(proc.radicado)}">
+                    <span class="sm-truncate" title="${escapeHtml(proc.radicado)}">${escapeHtml(proc.radicado)}</span>
                 </th>
-                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandante)}</span><span class="full-text">${escapeHtml(demandante)}</span></td>
-                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(demandado)}</span><span class="full-text">${escapeHtml(demandado)}</span></td>
-                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(juzgado)}</span><span class="full-text">${escapeHtml(juzgado)}</span></td>
-                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(clase)}</span><span class="full-text">${escapeHtml(clase)}</span></td>
-                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(subclase)}</span><span class="full-text">${escapeHtml(subclase)}</span></td>
-                <td class="px-6 py-4 truncate-cell"><span>${escapeHtml(ubicacion)}</span><span class="full-text">${escapeHtml(ubicacion)}</span></td>
-                <td class="px-6 py-4">${escapeHtml(fecha)}</td>
-                <td class="px-6 py-4 text-right">
+                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(demandante)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(demandante)}</span></td>
+                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(demandado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(demandado)}</span></td>
+                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(juzgado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(juzgado)}</span></td>
+                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(clase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(clase)}</span></td>
+                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(subclase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(subclase)}</span></td>
+                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(ubicacion)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(ubicacion)}</span></td>
+                <td class="px-3 py-2">${escapeHtml(fecha)}</td>
+                <td class="px-3 py-2 text-right">
                     ${proc.error ? `<span class="text-red-500 text-xs">${proc.error}</span>` : `
                     <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess(this, '${proc.radicado}', '${encodedProc}')">
                         <span class="material-icons text-sm">bookmark_add</span>
