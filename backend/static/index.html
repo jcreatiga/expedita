@@ -220,6 +220,27 @@
     let authToken = localStorage.getItem('authToken');
     let currentUser = null;
 
+    // Global fetch wrapper:
+    // - Ensures credentials: 'include' for cookie transport
+    // - Adds Authorization header from localStorage.authToken when not already provided
+    (function(){
+        const _origFetch = window.fetch.bind(window);
+        window.fetch = function(input, init){
+            init = init || {};
+            // ensure credentials include cookies for same-site or cross-site with allow_credentials
+            if (!init.credentials) init.credentials = 'include';
+            // ensure headers object
+            init.headers = init.headers || {};
+            // Prefer existing header casing; normalize check
+            const hasAuthHeader = Object.keys(init.headers).some(h => h.toLowerCase() === 'authorization');
+            const token = localStorage.getItem('authToken');
+            if (!hasAuthHeader && token) {
+                init.headers['Authorization'] = `Bearer ${token}`;
+            }
+            return _origFetch(input, init);
+        };
+    })();
+
     const loginScreen = document.getElementById('login-screen');
     const appScreen = document.getElementById('app-screen');
     const loginForm = document.getElementById('login-form');
@@ -340,12 +361,20 @@
         }
     }
 
-    function logout() {
+    async function logout() {
+        try {
+            // Tell server to clear cookie; fetch will include credentials via the global wrapper
+            await fetch('/auth/logout', { method: 'POST' });
+        } catch (e) {
+            // ignore network errors - proceed to clear local state
+            console.warn('Logout request failed:', e);
+        }
         authToken = null;
         localStorage.removeItem('authToken');
         currentUser = null;
         userEmailSpan.textContent = '';
         showAuth();
+        toast.success('Sesión cerrada');
     }
 
     async function loadUserInfo() {

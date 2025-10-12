@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 import datetime
@@ -255,36 +255,52 @@ def authenticate_user(db, email: str, password: str):
         return False
     return user
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user(request: Request):
+    """
+    Accept token from Authorization: Bearer <token> OR from cookie 'access_token'.
+    Returns the User or raises 401.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        # Ensure credentials present
-        if not credentials or not getattr(credentials, "credentials", None):
-            raise credentials_exception
 
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+    # Try Authorization header first
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+    token = None
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+
+    # If no header token, try cookie
+    if not token:
+        token = request.cookies.get("access_token")
+
+    if not token:
+        raise credentials_exception
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    except Exception:
+        # Any other error treat as unauthorized
+        raise credentials_exception
 
-        # Get user from database if available
-        if engine:
-            session = Session()
-            try:
-                user = get_user_by_email(session, email)
-            finally:
-                session.close()
-            if user is None:
-                raise credentials_exception
-            return user
-        else:
+    # Get user from database
+    if engine:
+        session = Session()
+        try:
+            user = get_user_by_email(session, email)
+        finally:
+            session.close()
+        if user is None:
             raise credentials_exception
-    except (JWTError, Exception):
-        # Any error decoding token or accessing DB should be treated as unauthorized
+        return user
+    else:
         raise credentials_exception
 
 def get_db():
@@ -410,9 +426,16 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
+# Configure CORS origins from FRONTEND_ORIGINS env var (comma-separated). If not set, allow all origins.
+_frontend_origins = os.getenv("FRONTEND_ORIGINS", "")
+if _frontend_origins:
+    _origins = [o.strip() for o in _frontend_origins.split(",") if o.strip()]
+else:
+    _origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for testing
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1568,7 +1591,7 @@ async def register_user(user: UserCreate, db = Depends(get_db)):
 
 @limiter.exempt
 @app.post("/auth/login", response_model=Token)
-async def login_user(user: UserLogin, db = Depends(get_db)):
+async def login_user(user: UserLogin, response: Response, db = Depends(get_db)):
     if not db:
         raise HTTPException(status_code=500, detail="Database not available")
 
@@ -1581,12 +1604,40 @@ async def login_user(user: UserLogin, db = Depends(get_db)):
         )
 
     access_token = create_access_token(data={"sub": user.email})
+    # Set HttpOnly cookie with token (also return token in JSON for header-based flows)
+    max_age_seconds = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=max_age_seconds,
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 @limiter.exempt
 @app.get("/auth/me")
 async def read_users_me(current_user = Depends(get_current_user)):
     return {"email": current_user.email, "id": current_user.id}
+
+@app.post("/auth/logout")
+async def logout(response: Response):
+    """
+    Clear the access_token cookie so clients using cookie-based auth are logged out.
+    """
+    response.set_cookie(
+        key="access_token",
+        value="",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=0,
+        expires=0,
+    )
+    return {"detail": "Sesión cerrada"}
 
 # Logs endpoint for debugging
 @app.get("/logs")
