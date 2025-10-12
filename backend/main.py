@@ -16,6 +16,12 @@ import requests
 import urllib3
 # Suppress InsecureRequestWarning for external API calls that use verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Single source of truth for UI version. Can be overridden via env var UI_VERSION.
+UI_VERSION = os.getenv("UI_VERSION", datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S"))
+# Path to the shipped index file
+INDEX_PATH = Path("backend/static/index.html")
+
 import asyncio
 import time
 import uuid
@@ -515,14 +521,25 @@ def create_access_token(data: dict):
     return encoded_jwt
 
 
-@app.get("/")
-def read_root():
+from fastapi import Response
+INDEX_PATH = Path("backend/static/index.html")
+
+def _render_index() -> Response:
     try:
-        with open("static/index.html", "r", encoding="utf-8") as f:
-            html_content = f.read()
-        return HTMLResponse(content=html_content)
+        html = INDEX_PATH.read_text(encoding="utf-8")
+        html = html.replace("{{UI_VERSION}}", UI_VERSION)
+        headers = {"Cache-Control": "no-store"}
+        return Response(content=html, media_type="text/html; charset=utf-8", headers=headers)
     except FileNotFoundError:
-        return {"message": "Hello World", "status": "Application is running!", "note": "Frontend not available"}
+        return HTMLResponse(content='{"message":"Frontend not available"}', media_type="application/json")
+
+@app.get("/", include_in_schema=False)
+def root_html():
+    return _render_index()
+
+@app.get("/index.html", include_in_schema=False)
+def root_index_html():
+    return _render_index()
 
 @app.get("/test")
 def test_endpoint():
@@ -2346,6 +2363,11 @@ async def api_cron_refresh_all(request: Request, db = Depends(get_db)):
             proj.updated_at = datetime.datetime.utcnow()
             db.commit()
         return {"status":"OK", "checked": total_checked, "updated": total_updated, "rows": all_rows, "errors": all_errors}
-    except Exception as e:
-        print(f"ERROR: Cron refresh failed: {e}")
-        return JSONResponse(status_code=500, content={"status":"error", "detail": f"Cron error: {str(e)}"})
+        except Exception as e:
+            print(f"ERROR: Cron refresh failed: {e}")
+            return JSONResponse(status_code=500, content={"status":"error", "detail": f"Cron error: {str(e)}"})
+    
+    # Health / version endpoint
+    @app.get("/healthz", tags=["system"])
+    def healthz():
+        return {"status": "ok", "ui_version": UI_VERSION}
