@@ -139,9 +139,9 @@
                         </a>
                     </li>
                     <li class="mb-2">
-                        <a id="tab-saved" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
+                        <a id="nav-saved" data-view="mis-procesos" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
                             <span class="material-icons">bookmark_border</span>
-                            <span class="ml-4 font-medium hidden lg:inline">Procesos Guardados</span>
+                            <span class="ml-4 font-medium hidden lg:inline">Mis Procesos</span>
                         </a>
                     </li>
                     <li class="mb-2">
@@ -173,24 +173,25 @@
                 <p class="text-lg text-secondary-text-light dark:text-secondary-text-dark mt-2">Ingresa los números de radicación para iniciar la consulta.</p>
             </header>
 
+            <section id="consultaBox" class="mb-6">
             <div class="bg-panel-light dark:bg-panel-dark p-8 rounded-lg shadow-md">
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-secondary-text-light dark:text-secondary-text-dark mb-2" for="process-numbers">Ingresa hasta 10 números de radicación separados por comas:</label>
                     <textarea id="batch-numbers" class="w-full p-4 bg-background-light dark:bg-background-dark border border-gray-300 dark:border-gray-600 rounded-md focus:ring-primary focus:border-primary transition duration-200" placeholder="Ej: 11001418902420250012, ..." rows="4"></textarea>
                 </div>
-
+ 
                 <div class="flex flex-col sm:flex-row gap-4">
                     <button id="btn-batch-query" class="w-full sm:w-auto bg-primary text-white font-semibold py-3 px-6 rounded-md hover:bg-opacity-90 transition-all duration-200 transform hover:scale-105 shadow-sm hover:shadow-lg flex items-center justify-center">
                         <span class="material-icons mr-2">search</span>
                         Consultar Procesos
                     </button>
-
+ 
                     <button id="btn-api-test" class="w-full sm:w-auto bg-transparent border border-primary text-primary font-semibold py-3 px-6 rounded-md hover:bg-primary hover:text-white transition-colors duration-200 flex items-center justify-center">
                         <span class="material-icons mr-2">api</span>
                         Probar Conexión API
                     </button>
                 </div>
-
+ 
                 <!-- Progress indicator -->
                 <div id="query-progress" class="mt-4 hidden">
                     <div class="flex items-center justify-between mb-2">
@@ -202,6 +203,7 @@
                     </div>
                 </div>
             </div>
+            </section>
 
             <div class="mt-12">
                 <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Resultados</h2>
@@ -251,10 +253,58 @@
     const btnBatchQuery = document.getElementById('btn-batch-query');
     const btnApiTest = document.getElementById('btn-api-test');
 
-    // Tabs
-    document.getElementById('tab-query').addEventListener('click', () => showTab('query'));
-    document.getElementById('tab-saved').addEventListener('click', () => showTab('saved'));
-    document.getElementById('tab-logs').addEventListener('click', () => showTab('logs'));
+    // Navigation & view state
+    const VIEWS = {
+      CONSULTA: 'consulta',
+      MIS: 'mis-procesos',
+      LOGS: 'logs'
+    };
+    let state = { view: localStorage.getItem('view') || VIEWS.CONSULTA };
+
+    function navigate(view) {
+      state.view = view;
+      localStorage.setItem('view', view);
+      updateUI();
+      try { window.location.hash = view; } catch (_) {}
+      // If switching to mis-procesos, load saved processes view
+      if (view === VIEWS.MIS) loadSavedProcesses();
+      if (view === VIEWS.CONSULTA) { /* no-op: consulta visible */ }
+      if (view === VIEWS.LOGS) loadLogs();
+    }
+
+    function updateUI() {
+      const isMis = state.view === VIEWS.MIS;
+      const consultaBox = document.getElementById('consultaBox');
+      if (consultaBox) {
+        consultaBox.classList.toggle('hidden', isMis);
+      }
+      const titleEl = document.getElementById('pageTitle');
+      if (titleEl) titleEl.textContent = isMis ? 'Mis Procesos' : 'Consulta de Procesos Judiciales';
+
+      // Highlight sidebar items
+      document.querySelectorAll('[data-view]').forEach(el => {
+        try {
+          el.classList.toggle('bg-background-light', el.dataset.view === state.view);
+        } catch (e) {}
+      });
+    }
+
+    // Wire sidebar buttons (keep existing tab-* handlers if present)
+    document.getElementById('nav-consulta')?.addEventListener('click', () => navigate(VIEWS.CONSULTA));
+    document.getElementById('nav-saved')?.addEventListener('click', () => navigate(VIEWS.MIS));
+    document.getElementById('nav-logs')?.addEventListener('click', () => navigate(VIEWS.LOGS));
+
+    // Backwards compatibility: if old ids exist, wire them to same handlers
+    document.getElementById('tab-query')?.addEventListener('click', () => navigate(VIEWS.CONSULTA));
+    document.getElementById('tab-saved')?.addEventListener('click', () => navigate(VIEWS.MIS));
+    document.getElementById('tab-logs')?.addEventListener('click', () => navigate(VIEWS.LOGS));
+
+    // Restore view from hash on load and apply UI
+    window.addEventListener('load', () => {
+      const h = window.location.hash?.replace('#','');
+      if (h && Object.values(VIEWS).includes(h)) state.view = h;
+      updateUI();
+    });
 
     // Initialize app
     document.addEventListener('DOMContentLoaded', function() {
