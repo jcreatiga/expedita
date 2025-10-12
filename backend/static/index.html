@@ -122,6 +122,9 @@
         }
         .results-full { max-width: none !important; width: 100% !important; }
  
+        /* Prevent breaking mid-glyph for tokens without spaces (improves readability) */
+        .break-keep { word-break: keep-all; }
+ 
         /* Small helper to visually hide table when empty */
         .table-empty { padding: 28px; color: var(--secondary-text-dark); }
  
@@ -709,7 +712,7 @@
                 <table id="results-table" class="w-full min-w-[1200px] lg:min-w-0 table-fixed lg:table-auto" role="table" aria-label="Resultados de consulta de procesos judiciales">
                     <thead class="bg-neutral-900/60 supports-[backdrop-filter]:bg-neutral-900/40">
                         <tr>
-                            <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('radicado')" style="cursor:pointer;" aria-sort="none">Radicado</th>
+                            <th class="px-3 py-2 sticky top-0 z-10 text-left w-56 md:w-64 lg:w-72" scope="col" onclick="sortTable('radicado')" style="cursor:pointer;" aria-sort="none">Radicado</th>
                             <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandante')" style="cursor:pointer;" aria-sort="none">Demandante</th>
                             <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('demandado')" style="cursor:pointer;" aria-sort="none">Demandado</th>
                             <th class="px-3 py-2 sticky top-0 z-10 text-left" scope="col" onclick="sortTable('juzgado')" style="cursor:pointer;" aria-sort="none">Juzgado</th>
@@ -784,21 +787,21 @@
             // Build row with tooltip on radicado and title attributes for truncated cells
             const encodedProc = encodeURIComponent(JSON.stringify(proc));
             row.innerHTML = `
-                <th class="px-3 py-2 font-medium text-text-light dark:text-text-dark sm-truncate lg:whitespace-normal lg:break-words" scope="row" title="idProceso: ${proc.idProceso || 'N/A'} | ${escapeHtml(proc.radicado)}">
-                    <span class="sm-truncate" title="${escapeHtml(proc.radicado)}">${escapeHtml(proc.radicado)}</span>
+                <th class="px-3 py-2 w-56 md:w-64 lg:w-72 font-medium text-text-light dark:text-text-dark whitespace-nowrap font-mono tracking-tight truncate lg:truncate-none lg:overflow-visible" scope="row" title="${escapeHtml(proc.radicado)}">
+                    ${escapeHtml(proc.radicado)}
                 </th>
                 <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(demandante)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(demandante)}</span></td>
                 <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(demandado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(demandado)}</span></td>
-                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(juzgado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(juzgado)}</span></td>
+                <td class="px-3 py-2 whitespace-nowrap break-keep sm:truncate" title="${escapeHtml(juzgado)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(juzgado)}</span></td>
                 <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(clase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(clase)}</span></td>
-                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(subclase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(subclase)}</span></td>
-                <td class="px-3 py-2 truncate sm-truncate" title="${escapeHtml(ubicacion)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(ubicacion)}</span></td>
+                <td class="px-3 py-2 whitespace-nowrap break-keep sm:truncate" title="${escapeHtml(subclase)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(subclase)}</span></td>
+                <td class="px-3 py-2 whitespace-nowrap break-keep sm:truncate" title="${escapeHtml(ubicacion)}"><span class="block lg:whitespace-normal lg:break-words">${escapeHtml(ubicacion)}</span></td>
                 <td class="px-3 py-2">${escapeHtml(fecha)}</td>
-                <td class="px-3 py-2 text-right">
+                <td class="px-3 py-2 text-right w-28 md:w-32 lg:w-36">
                     ${proc.error ? `<span class="text-red-500 text-xs">${proc.error}</span>` : `
-                    <button class="font-medium text-primary hover:underline flex items-center gap-1" onclick="saveProcess(this, '${proc.radicado}', '${encodedProc}')">
-                        <span class="material-icons text-sm">bookmark_add</span>
-                        Guardar
+                    <button aria-label="Guardar" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-primary hover:underline whitespace-nowrap" onclick="saveProcess(this, '${proc.radicado}', '${encodedProc}')">
+                        <span class="material-icons text-sm" aria-hidden="true">bookmark_add</span>
+                        <span class="hidden md:inline">Guardar</span>
                     </button>
                     `}
                 </td>
