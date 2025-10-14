@@ -128,7 +128,53 @@
         /* Utilities for nowrap and ellipsis */
         .nowrap-token { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
         .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
- 
+
+        /* Project cases table: full-width responsive layout with fixed Radicado */
+        .project-cases-container {
+            max-width: none !important;
+            width: 100% !important;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .project-cases-table {
+            width: 100%;
+            table-layout: fixed; /* enables explicit column widths and ellipsis */
+            border-collapse: collapse;
+        }
+        .project-cases-table th,
+        .project-cases-table td {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap; /* default: keep compact */
+        }
+        /* Give more room and allow wrapping for Demandante y Demandado on medium+ screens */
+        @media (min-width: 768px) {
+            .project-cases-table th:nth-child(3),
+            .project-cases-table td:nth-child(3),
+            .project-cases-table th:nth-child(4),
+            .project-cases-table td:nth-child(4) {
+                white-space: normal;
+                word-break: break-word;
+            }
+        }
+        /* Fixed widths for key columns */
+        .project-cases-table th:nth-child(1),
+        .project-cases-table td:nth-child(1) { width: 44px; } /* checkbox */
+        .project-cases-table th:nth-child(2),
+        .project-cases-table td:nth-child(2) {
+            width: 26ch;                  /* 23 dígitos + respiro */
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+        }
+        .project-cases-table th:nth-child(11),
+        .project-cases-table td:nth-child(11) { width: 140px; } /* opciones */
+        /* Reasonable widths for dates */
+        .project-cases-table th:nth-child(9),
+        .project-cases-table td:nth-child(9),
+        .project-cases-table th:nth-child(10),
+        .project-cases-table td:nth-child(10) { width: 9rem; }
+
         /* Guardar button base */
         .btn-guardar { white-space: nowrap; display:inline-flex; align-items:center; gap:0.5rem; border-radius:8px; padding:6px 10px; border:1px solid rgba(42,50,58,0.2); }
         .btn-guardar .icon { display:inline-block; }
@@ -1680,8 +1726,8 @@
                 </div>
             `;
             const tableHtmlStart = `
-                <div class="table-container">
-                    <table id="project-cases-table" role="table" aria-label="Expedientes del proyecto">
+                <div class="table-container project-cases-container">
+                    <table id="project-cases-table" class="project-cases-table" role="table" aria-label="Expedientes del proyecto">
                         <thead>
                             <tr>
                                 <th scope="col"><input id="check-all-project" type="checkbox" /></th>
@@ -1712,13 +1758,13 @@
                 row.dataset.caseId = c.id;
                 row.innerHTML = `
                     <td class="px-4 py-2 text-center"><input class="proj-checkbox" type="checkbox" data-id="${c.id}" /></td>
-                    <td class="px-6 py-4 font-medium text-text-light dark:text-text-dark whitespace-nowrap" title="idProceso: ${c.idProceso || 'N/A'}">${escapeHtml(c.radicado || '')}</td>
-                    <td class="px-6 py-4 truncate-cell" data-col="demandante">${escapeHtml(c.demandante || '')}</td>
-                    <td class="px-6 py-4 truncate-cell" data-col="demandado">${escapeHtml(c.demandado || '')}</td>
-                    <td class="px-6 py-4 truncate-cell" data-col="juzgado">${escapeHtml(c.juzgado || '')}</td>
-                    <td class="px-6 py-4 truncate-cell" data-col="clase">${escapeHtml(c.clase || '')}</td>
-                    <td class="px-6 py-4 truncate-cell" data-col="subclase">${escapeHtml(c.subclase || '')}</td>
-                    <td class="px-6 py-4 truncate-cell" data-col="ubicacion">${escapeHtml(c.ubicacion || '')}</td>
+                    <td class="px-6 py-4 font-medium text-text-light dark:text-text-dark" title="idProceso: ${c.idProceso || 'N/A'}">${escapeHtml(c.radicado || '')}</td>
+                    <td class="px-6 py-4" data-col="demandante">${escapeHtml(c.demandante || '')}</td>
+                    <td class="px-6 py-4" data-col="demandado">${escapeHtml(c.demandado || '')}</td>
+                    <td class="px-6 py-4" data-col="juzgado">${escapeHtml(c.juzgado || '')}</td>
+                    <td class="px-6 py-4" data-col="clase">${escapeHtml(c.clase || '')}</td>
+                    <td class="px-6 py-4" data-col="subclase">${escapeHtml(c.subclase || '')}</td>
+                    <td class="px-6 py-4" data-col="ubicacion">${escapeHtml(c.ubicacion || '')}</td>
                     <td class="px-6 py-4" data-col="fechaUltimaActuacion">${escapeHtml(fecha)}</td>
                     <td class="px-6 py-4 text-sm text-secondary-text-light" data-col="updatedAt">${escapeHtml(updated)}</td>
                     <td class="px-6 py-4 text-right">
