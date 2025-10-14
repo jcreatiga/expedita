@@ -2144,23 +2144,39 @@ def list_project_cases(
     )
     rows = []
     for pc in q.all():
-        sp = pc.saved_process  # could be None if you used radicado-only linking
-        rows.append(
-            {
+        sp = pc.saved_process
+        if sp:
+            # Usar datos de saved_process
+            rows.append({
                 "id": pc.id,
-                "savedProcessId": getattr(sp, "id", None),
-                "radicado": getattr(sp, "numero", pc.radicado),
-                "idProceso": getattr(sp, "id_proceso", None),
-                "demandante": getattr(sp, "demandante", None),
-                "demandado": getattr(sp, "demandado", None),
-                "juzgado": getattr(sp, "despacho", None),
-                "clase": getattr(sp, "clase_proceso", None),
-                "subclase": getattr(sp, "subclase_proceso", None),
-                "ubicacion": getattr(sp, "ubicacion", None),
-                "fechaUltimaActuacion": getattr(sp, "fecha_ultima_actuacion", None),
+                "savedProcessId": sp.id,
+                "radicado": sp.radicado,
+                "idProceso": sp.id_proceso,
+                "demandante": sp.demandante,
+                "demandado": sp.demandado,
+                "juzgado": sp.juzgado,
+                "clase": sp.clase,
+                "subclase": sp.subclase,
+                "ubicacion": sp.ubicacion,
+                "fechaUltimaActuacion": sp.fecha_ultima_actuacion.strftime("%d/%m/%Y") if sp.fecha_ultima_actuacion else "N/A",
                 "updatedAt": pc.updated_at.strftime("%d/%m/%Y") if pc.updated_at else None,
-            }
-        )
+            })
+        else:
+            # Fallback: solo radicado disponible
+            rows.append({
+                "id": pc.id,
+                "savedProcessId": None,
+                "radicado": pc.radicado or "N/A",
+                "idProceso": None,
+                "demandante": "N/A",
+                "demandado": "N/A",
+                "juzgado": "N/A",
+                "clase": "N/A",
+                "subclase": "N/A",
+                "ubicacion": "N/A",
+                "fechaUltimaActuacion": "N/A",
+                "updatedAt": pc.updated_at.strftime("%d/%m/%Y") if pc.updated_at else None,
+            })
     return {"status": "OK", "rows": rows}
 
 @app.post("/api/projects/{project_id}/cases")
