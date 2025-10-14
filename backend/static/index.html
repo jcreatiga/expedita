@@ -1667,7 +1667,7 @@
                 container.innerHTML = `<div class="table-error">${data?.detail || 'Error cargando proyecto'}</div>`;
                 return;
             }
-            const cases = data.cases || [];
+            const cases = data.rows || [];
             // Breadcrumb & toolbar
             const toolbar = `
                 <div class="flex items-center justify-between mb-4">
