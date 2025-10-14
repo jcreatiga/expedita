@@ -444,6 +444,9 @@
           // Clear main content
           const queryResult = document.getElementById('query-result');
           if (queryResult) queryResult.innerHTML = '';
+          // Hide debug panel if it was visible
+          const debugPanel = document.getElementById('debug-panel');
+          if (debugPanel) debugPanel.classList.add('hidden');
         }
       },
       debug: {
@@ -455,12 +458,18 @@
             header.querySelector('h1').textContent = 'Logs de Debug';
             header.querySelector('p').textContent = 'Historial de consultas y respuestas del sistema.';
           }
+          // Ensure debug panel is visible
+          const debugPanel = document.getElementById('debug-panel');
+          if (debugPanel) debugPanel.classList.remove('hidden');
           loadLogs();
         },
         cleanup: () => {
           // Clear main content
           const queryResult = document.getElementById('query-result');
           if (queryResult) queryResult.innerHTML = '';
+          // Hide debug panel
+          const debugPanel = document.getElementById('debug-panel');
+          if (debugPanel) debugPanel.classList.add('hidden');
         }
       }
     };
