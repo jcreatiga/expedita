@@ -274,19 +274,19 @@
             <nav class="flex-grow">
                 <ul>
                     <li class="mb-2">
-                        <a id="tab-query" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
+                        <a href="#consulta" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
                             <span class="material-icons">search</span>
                             <span class="ml-4 font-medium hidden lg:inline">Consultar Procesos</span>
                         </a>
                     </li>
                     <li class="mb-2">
-                        <a id="nav-saved" data-view="mis-procesos" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
+                        <a href="#proyectos" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
                             <span class="material-icons">bookmark_border</span>
                             <span class="ml-4 font-medium hidden lg:inline">Mis Procesos</span>
                         </a>
                     </li>
                     <li class="mb-2">
-                        <a id="tab-logs" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200 cursor-pointer">
+                        <a href="#debug" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
                             <span class="material-icons">bug_report</span>
                             <span class="ml-4 font-medium hidden lg:inline">Logs de Debug</span>
                         </a>
@@ -394,58 +394,126 @@
     const btnBatchQuery = document.getElementById('btn-batch-query');
     const btnApiTest = document.getElementById('btn-api-test');
 
-    // Navigation & view state
-    const VIEWS = {
-      CONSULTA: 'consulta',
-      MIS: 'mis-procesos',
-      LOGS: 'logs'
-    };
-    let state = { view: localStorage.getItem('view') || VIEWS.CONSULTA };
-
-    function navigate(view) {
-      state.view = view;
-      localStorage.setItem('view', view);
-      updateUI();
-      try { window.location.hash = view; } catch (_) {}
-      // If switching to mis-procesos, load saved processes view
-      if (view === VIEWS.MIS) loadSavedProcesses();
-      if (view === VIEWS.CONSULTA) { /* no-op: consulta visible */ }
-      if (view === VIEWS.LOGS) loadLogs();
-    }
-
-    function updateUI() {
-      const isMis = state.view === VIEWS.MIS;
-      const consultaBox = document.getElementById('consultaBox');
-      if (consultaBox) {
-        consultaBox.classList.toggle('hidden', isMis);
+    // Router for hash-based navigation
+    const ROUTES = {
+      consulta: {
+        title: 'Consulta de Procesos Judiciales',
+        render: () => {
+          // Show consulta form and results
+          const consultaBox = document.getElementById('consultaBox');
+          const resultados = document.getElementById('resultados');
+          const header = document.querySelector('header');
+          if (consultaBox) consultaBox.classList.remove('hidden');
+          if (resultados) resultados.classList.remove('hidden');
+          if (header) {
+            header.querySelector('h1').textContent = 'Consulta de Procesos Judiciales';
+            header.querySelector('p').textContent = 'Ingresa los números de radicación para iniciar la consulta.';
+          }
+          // Reset results to idle state
+          const queryResult = document.getElementById('query-result');
+          if (queryResult) {
+            queryResult.innerHTML = '<div class="table-loading">Cargando resultados...</div>';
+          }
+          // Clear progress
+          const progressContainer = document.getElementById('query-progress');
+          if (progressContainer) progressContainer.classList.add('hidden');
+          // Clear debug panel
+          const debugPanel = document.getElementById('debug-panel');
+          if (debugPanel) debugPanel.classList.add('hidden');
+        },
+        cleanup: () => {
+          // Hide consulta elements
+          const consultaBox = document.getElementById('consultaBox');
+          const resultados = document.getElementById('resultados');
+          if (consultaBox) consultaBox.classList.add('hidden');
+          if (resultados) resultados.classList.add('hidden');
+        }
+      },
+      proyectos: {
+        title: 'Mis Procesos',
+        render: () => {
+          // Show projects view
+          const header = document.querySelector('header');
+          if (header) {
+            header.querySelector('h1').textContent = 'Mis Procesos';
+            header.querySelector('p').textContent = 'Gestiona tus proyectos y expedientes guardados.';
+          }
+          loadSavedProcesses();
+        },
+        cleanup: () => {
+          // Clear main content
+          const queryResult = document.getElementById('query-result');
+          if (queryResult) queryResult.innerHTML = '';
+        }
+      },
+      debug: {
+        title: 'Logs de Debug',
+        render: () => {
+          // Show debug logs
+          const header = document.querySelector('header');
+          if (header) {
+            header.querySelector('h1').textContent = 'Logs de Debug';
+            header.querySelector('p').textContent = 'Historial de consultas y respuestas del sistema.';
+          }
+          loadLogs();
+        },
+        cleanup: () => {
+          // Clear main content
+          const queryResult = document.getElementById('query-result');
+          if (queryResult) queryResult.innerHTML = '';
+        }
       }
-      const titleEl = document.getElementById('pageTitle');
-      if (titleEl) titleEl.textContent = isMis ? 'Mis Procesos' : 'Consulta de Procesos Judiciales';
+    };
 
-      // Highlight sidebar items
-      document.querySelectorAll('[data-view]').forEach(el => {
-        try {
-          el.classList.toggle('bg-background-light', el.dataset.view === state.view);
-        } catch (e) {}
-      });
+    let currentRoute = null;
+
+    function navigate(route) {
+      if (!ROUTES[route]) return;
+      // Cleanup previous route
+      if (currentRoute && ROUTES[currentRoute]) {
+        ROUTES[currentRoute].cleanup();
+      }
+      // Set new route
+      currentRoute = route;
+      // Update hash without triggering hashchange
+      history.replaceState(null, null, `#${route}`);
+      // Update UI
+      updateNavigationUI(route);
+      // Render new route
+      ROUTES[route].render();
     }
 
-    // Wire sidebar buttons (keep existing tab-* handlers if present)
-    document.getElementById('nav-consulta')?.addEventListener('click', () => navigate(VIEWS.CONSULTA));
-    document.getElementById('nav-saved')?.addEventListener('click', () => navigate(VIEWS.MIS));
-    document.getElementById('nav-logs')?.addEventListener('click', () => navigate(VIEWS.LOGS));
+    function updateNavigationUI(activeRoute) {
+      // Remove active class from all nav links
+      document.querySelectorAll('nav a').forEach(link => {
+        link.classList.remove('active');
+        link.removeAttribute('aria-current');
+      });
+      // Add active class to current route link
+      const activeLink = document.querySelector(`nav a[href="#${activeRoute}"]`);
+      if (activeLink) {
+        activeLink.classList.add('active');
+        activeLink.setAttribute('aria-current', 'page');
+      }
+    }
 
-    // Backwards compatibility: if old ids exist, wire them to same handlers
-    document.getElementById('tab-query')?.addEventListener('click', () => navigate(VIEWS.CONSULTA));
-    document.getElementById('tab-saved')?.addEventListener('click', () => navigate(VIEWS.MIS));
-    document.getElementById('tab-logs')?.addEventListener('click', () => navigate(VIEWS.LOGS));
+    // Handle hash changes
+    function handleHashChange() {
+      const hash = window.location.hash.replace('#', '') || 'consulta';
+      if (ROUTES[hash]) {
+        navigate(hash);
+      } else {
+        navigate('consulta'); // Default route
+      }
+    }
 
-    // Restore view from hash on load and apply UI
+    // Initialize router on load
     window.addEventListener('load', () => {
-      const h = window.location.hash?.replace('#','');
-      if (h && Object.values(VIEWS).includes(h)) state.view = h;
-      updateUI();
+      handleHashChange();
     });
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashChange);
 
     // Initialize app
     document.addEventListener('DOMContentLoaded', function() {
