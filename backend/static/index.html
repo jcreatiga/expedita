@@ -482,6 +482,8 @@
             header.querySelector('h1').textContent = 'Mis Procesos';
             header.querySelector('p').textContent = 'Gestiona tus proyectos y expedientes guardados.';
           }
+          const resultados = document.getElementById('resultados');
+          if (resultados) resultados.classList.remove('hidden');
           loadSavedProcesses();
         },
         cleanup: () => {
@@ -491,6 +493,9 @@
           // Hide debug panel if it was visible
           const debugPanel = document.getElementById('debug-panel');
           if (debugPanel) debugPanel.classList.add('hidden');
+          // Hide resultados section when leaving proyectos view
+          const resultados = document.getElementById('resultados');
+          if (resultados) resultados.classList.add('hidden');
         }
       },
       debug: {
