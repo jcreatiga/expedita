@@ -147,15 +147,13 @@
             text-overflow: ellipsis;
             white-space: nowrap; /* default: keep compact */
         }
-        /* Give more room and allow wrapping for Demandante y Demandado on medium+ screens */
-        @media (min-width: 768px) {
-            .project-cases-table th:nth-child(3),
-            .project-cases-table td:nth-child(3),
-            .project-cases-table th:nth-child(4),
-            .project-cases-table td:nth-child(4) {
-                white-space: normal;
-                word-break: break-word;
-            }
+        /* Allow Demandante and Demandado to wrap on all screen sizes */
+        .project-cases-table th:nth-child(3),
+        .project-cases-table td:nth-child(3),
+        .project-cases-table th:nth-child(4),
+        .project-cases-table td:nth-child(4) {
+            white-space: normal;
+            word-break: break-word;
         }
         /* Fixed widths for key columns */
         .project-cases-table th:nth-child(1),
@@ -320,19 +318,19 @@
             <nav class="flex-grow">
                 <ul>
                     <li class="mb-2">
-                        <a href="#consulta" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
+                        <a id="nav-consulta" href="#consulta" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
                             <span class="material-icons">search</span>
                             <span class="ml-4 font-medium hidden lg:inline">Consultar Procesos</span>
                         </a>
                     </li>
                     <li class="mb-2">
-                        <a href="#proyectos" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
+                        <a id="nav-proyectos" href="#proyectos" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
                             <span class="material-icons">bookmark_border</span>
                             <span class="ml-4 font-medium hidden lg:inline">Mis Procesos</span>
                         </a>
                     </li>
                     <li class="mb-2">
-                        <a href="#debug" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
+                        <a id="nav-debug" href="#debug" class="flex items-center p-3 rounded-lg text-secondary-text-light dark:text-secondary-text-dark hover:bg-background-light dark:hover:bg-background-dark hover:text-primary transition-colors duration-200">
                             <span class="material-icons">bug_report</span>
                             <span class="ml-4 font-medium hidden lg:inline">Logs de Debug</span>
                         </a>
@@ -541,13 +539,15 @@
     function updateNavigationUI(activeRoute) {
       // Remove active class from all nav links
       document.querySelectorAll('nav a').forEach(link => {
-        link.classList.remove('active');
+        link.classList.remove('bg-primary', 'text-white');
+        link.classList.add('text-secondary-text-light', 'dark:text-secondary-text-dark', 'hover:bg-background-light', 'dark:hover:bg-background-dark', 'hover:text-primary');
         link.removeAttribute('aria-current');
       });
       // Add active class to current route link
       const activeLink = document.querySelector(`nav a[href="#${activeRoute}"]`);
       if (activeLink) {
-        activeLink.classList.add('active');
+        activeLink.classList.add('bg-primary', 'text-white');
+        activeLink.classList.remove('text-secondary-text-light', 'dark:text-secondary-text-dark', 'hover:bg-background-light', 'dark:hover:bg-background-dark', 'hover:text-primary');
         activeLink.setAttribute('aria-current', 'page');
       }
     }
@@ -565,6 +565,9 @@
     // Initialize router on load
     window.addEventListener('load', () => {
       handleHashChange();
+      // Also call handleHashChange on DOMContentLoaded to ensure initial render
+      // if the hash is already set when the script loads.
+      document.addEventListener('DOMContentLoaded', handleHashChange);
     });
 
     // Listen for hash changes
@@ -1836,8 +1839,8 @@
                 row.innerHTML = `
                     <td class="px-4 py-2 text-center"><input class="proj-checkbox" type="checkbox" data-id="${c.id}" /></td>
                     <td class="px-6 py-4 font-medium text-text-light dark:text-text-dark" title="idProceso: ${c.idProceso || 'N/A'}">${escapeHtml(c.radicado || '')}</td>
-                    <td class="px-6 py-4" data-col="demandante">${escapeHtml(c.demandante || '')}</td>
-                    <td class="px-6 py-4" data-col="demandado">${escapeHtml(c.demandado || '')}</td>
+                    <td class="px-6 py-4 text-wrap" data-col="demandante">${escapeHtml(c.demandante || '')}</td>
+                    <td class="px-6 py-4 text-wrap" data-col="demandado">${escapeHtml(c.demandado || '')}</td>
                     <td class="px-6 py-4" data-col="juzgado">${escapeHtml(c.juzgado || '')}</td>
                     <td class="px-6 py-4" data-col="clase">${escapeHtml(c.clase || '')}</td>
                     <td class="px-6 py-4" data-col="subclase">${escapeHtml(c.subclase || '')}</td>
