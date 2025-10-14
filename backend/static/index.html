@@ -347,10 +347,10 @@
             </section>
 
 <section id="resultados" class="w-full max-w-none mt-12 results-full">
-    <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Resultados</h2>
+    <h2 class="text-2xl font-semibold mb-6 text-text-light dark:text-text-dark">Tus proyectos</h2>
     <div id="query-result" class="w-full max-w-none">
         <!-- Table and controls will be rendered here by JavaScript -->
-        <div class="table-loading">Cargando resultados...</div>
+        <div class="table-loading">Tus consultas aparecerán aquí.</div>
     </div>
 </section>
         </main>
@@ -1667,7 +1667,7 @@
                 container.innerHTML = `<div class="table-error">${data?.detail || 'Error cargando proyecto'}</div>`;
                 return;
             }
-            const cases = data.cases || [];
+            const cases = data.rows || [];
             // Breadcrumb & toolbar
             const toolbar = `
                 <div class="flex items-center justify-between mb-4">
