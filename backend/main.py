@@ -165,6 +165,11 @@ app.add_middleware(SlowAPIMiddleware)
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    with open("static/index.html", "r") as f:
+        return HTMLResponse(content=f.read(), status_code=200)
+
 # Authentication functions
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
