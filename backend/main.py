@@ -25,7 +25,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 # Import database configuration and models
-from backend.database import DB_AVAILABLE, SessionLocal, engine, Base, Proceso, ProcesosDetalles, Project, ProjectCase, User, get_db
+from .database import DB_AVAILABLE, SessionLocal, engine, Base, Proceso, ProcesosDetalles, Project, ProjectCase, User, get_db
 
 print(f"DEBUG: DB_AVAILABLE is {DB_AVAILABLE}")
 if DB_AVAILABLE:

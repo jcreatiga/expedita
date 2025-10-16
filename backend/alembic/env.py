@@ -18,8 +18,8 @@ if config.config_file_name:
 
 # Import target metadata from the application (backend.main -> Base)
 try:
-    import backend.database
-    target_metadata = backend.database.Base.metadata
+    from ..database import Base
+    target_metadata = Base.metadata
 except Exception as e:
     # If import fails, keep target_metadata = None; autogenerate will be limited
     print("WARNING: Could not import Base from backend.database:", e)
