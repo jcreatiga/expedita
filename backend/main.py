@@ -14,9 +14,6 @@ import os
 import json
 import requests
 import urllib3
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship, Session
 # Suppress InsecureRequestWarning for external API calls that use verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import asyncio
@@ -27,36 +24,18 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-# Try to import SQLAlchemy lazily so the app can start even if the environment's Python
-# / SQLAlchemy combination is incompatible. If import fails we set DB_AVAILABLE=False
-# and avoid defining models / creating sessions at import time.
-DB_AVAILABLE = True
-try:
-    from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey, Boolean
-    from sqlalchemy.ext.declarative import declarative_base
-    from sqlalchemy.orm import sessionmaker, relationship, Session
-    Base = declarative_base()
-except Exception as e:
-    print(f"WARNING: SQLAlchemy import failed - running without DB. Error: {e}")
-    DB_AVAILABLE = False
-    Base = None
-    create_engine = None
-    sessionmaker = None
-    relationship = None
+# Import database configuration and models
+from backend.database import DB_AVAILABLE, SessionLocal, engine, Base, Proceso, ProcesosDetalles, Project, ProjectCase, User, get_db
 
 print(f"DEBUG: DB_AVAILABLE is {DB_AVAILABLE}")
 if DB_AVAILABLE:
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")
-    print(f"DEBUG: Attempting to connect to database at {DATABASE_URL}")
-    engine = create_engine(DATABASE_URL)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     try:
         # Try to connect to validate the engine
         with engine.connect() as connection:
             print("DEBUG: Successfully connected to the database.")
     except Exception as e:
         print(f"ERROR: Could not connect to the database. Error: {e}")
-        DB_AVAILABLE = False
+        # DB_AVAILABLE = False # No es necesario, ya se maneja en database.py
 
 # Authentication configuration
 SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -174,22 +153,6 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
-# Database setup
-if DB_AVAILABLE:
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")
-    engine = create_engine(DATABASE_URL)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Dependency to get DB session
-def get_db():
-    if not DB_AVAILABLE:
-        raise HTTPException(status_code=500, detail="Database not available")
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 # FastAPI app instance
 app = FastAPI()
 
@@ -257,6 +220,8 @@ async def validate_radicado_exists(radicado: str) -> bool:
     except Exception as e:
         print(f"Error validating radicado: {e}")
         return False
+
+# API endpoints
 
 # Helper function to get user ID from username
 def get_user_id_from_username(username: str, db: Session) -> int:
@@ -332,14 +297,12 @@ async def forgot_password(email: str, db: Session = Depends(get_db)):
     # For now, just return a success message
     return {"message": "If the email exists, a password reset link has been sent"}
 
-# API endpoints
-
 # Endpoint to save a process (from consulta) - requires project_id
 @app.post("/api/saved")
 async def save_process(
     process: ProcesoCreate,
     project_id: int,
-    current_user: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     # Validate that project_id is provided and project exists
@@ -395,7 +358,7 @@ async def save_process(
 async def add_case_to_project(
     project_id: int,
     case_data: dict,  # Expecting {"radicado": "..."} or {"idProceso": ...}
-    current_user: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     # Validate project exists and user owns it
@@ -464,7 +427,7 @@ async def add_case_to_project(
 @app.delete("/api/saved/{saved_id}")
 async def delete_saved_process(
     saved_id: int,
-    current_user: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     # Find the process
@@ -496,7 +459,7 @@ async def delete_saved_process(
 # Endpoint to get all saved processes for the current user
 @app.get("/api/saved")
 async def get_saved_processes(
-    current_user: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     user_id = get_user_id_from_username(current_user.username, db)
@@ -541,7 +504,7 @@ async def get_saved_processes(
 # Endpoint to refresh all saved processes
 @app.post("/api/saved/refresh")
 async def refresh_saved_processes(
-    current_user: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     user_id = get_user_id_from_username(current_user.username, db)
@@ -554,7 +517,6 @@ async def refresh_saved_processes(
         # Refresh process details from Rama Judicial API
         try:
             # This would need to be implemented based on the actual API structure
-            # For now, just mark as updated
             process.updated_at = datetime.datetime.utcnow()
             updated_count += 1
         except Exception as e:
@@ -568,7 +530,7 @@ async def refresh_saved_processes(
 @app.post("/api/projects/{project_id}/refresh")
 async def refresh_project_cases(
     project_id: int,
-    current_user: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     # Validate project exists and user owns it
@@ -581,7 +543,7 @@ async def refresh_project_cases(
         raise HTTPException(status_code=403, detail="No tienes permisos para acceder a este proyecto")
     
     # Get all cases in the project
-    project_cases = db.query(ProjectCase).filter(ProjectCase.project_id == project_id).all()
+    project_cases = db.query(ProjectCase).filter(ProjectCase.project_id == project.id).all()
     
     updated_count = 0
     for project_case in project_cases:
@@ -605,15 +567,15 @@ async def refresh_project_cases(
 async def refresh_selected_project_cases(
     project_id: int,
     case_ids: list[int],  # List of ProjectCase IDs to refresh
-    current_user: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    user_id = get_user_id_from_username(current_user.username, db)
     # Validate project exists and user owns it
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
     
+    user_id = get_user_id_from_username(current_user.username, db)
     if project.user_id != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para acceder a este proyecto")
     
@@ -621,7 +583,7 @@ async def refresh_selected_project_cases(
     for case_id in case_ids:
         project_case = db.query(ProjectCase).filter(
             ProjectCase.id == case_id,
-            ProjectCase.project_id == project_id
+            ProjectCase.project_id == project.id
         ).first()
         
         if project_case and project_case.idProceso:
@@ -669,84 +631,6 @@ async def refresh_all_projects(
     
     return {"message": f"{total_updated} procesos actualizados en todos los proyectos"}
 
-# Rate limiting middleware
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
-
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# SQLAlchemy models
-if DB_AVAILABLE:
-    class Proceso(Base):
-        __tablename__ = "procesos"
-        
-        idProceso = Column(Integer, primary_key=True, index=True)
-        idUsuario = Column(Integer, index=True)
-        radicado = Column(String(23), nullable=False)
-        id_expediente = Column(String(50))
-        snapshot_consulta = Column(Text)
-        created_at = Column(DateTime, default=datetime.datetime.utcnow)
-        updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-        deleted_at = Column(Boolean, nullable=True, default=None)
-        
-        # Relationship to ProcesosDetalles
-        detalles = relationship("ProcesosDetalles", back_populates="proceso", cascade="all, delete-orphan")
-
-    class ProcesosDetalles(Base):
-        __tablename__ = "ProcesosDetalles"
-        
-        id = Column(Integer, primary_key=True, index=True)
-        idProceso = Column(Integer, ForeignKey("procesos.idProceso", ondelete="CASCADE"), nullable=False)
-        demandante = Column(String(255))
-        demandado = Column(String(255))
-        juzgado = Column(String(255))
-        clase = Column(String(255))
-        subclase = Column(String(255))
-        ubicacion = Column(String(255))
-        fecha_ultima_actuacion = Column(Date)
-        snapshot_detalle = Column(Text)
-        created_at = Column(DateTime, default=datetime.datetime.utcnow)
-        updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-        
-        # Relationship back to Proceso
-        proceso = relationship("Proceso", back_populates="detalles")
-
-    class Project(Base):
-        __tablename__ = "projects"
-        
-        id = Column(Integer, primary_key=True, index=True)
-        user_id = Column(Integer, nullable=False)
-        name = Column(String(255), nullable=False)
-        color_hex = Column(String(7), nullable=False, default="#2563EB")
-        total_cases = Column(Integer, nullable=False, default=0)
-        created_at = Column(DateTime, default=datetime.datetime.utcnow)
-        updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-        
-        # Relationship to ProjectCase
-        cases = relationship("ProjectCase", back_populates="project", cascade="all, delete-orphan")
-
-    class ProjectCase(Base):
-        __tablename__ = "project_cases"
-        
-        id = Column(Integer, primary_key=True, index=True)
-        project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-        idProceso = Column(Integer, ForeignKey("procesos.idProceso", ondelete="SET NULL"), nullable=True)
-        radicado = Column(String(23), nullable=True)
-        created_at = Column(DateTime, default=datetime.datetime.utcnow)
-        updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-        
-        # Relationship back to Project
-        project = relationship("Project", back_populates="cases")
-
-    class User(Base):
-        __tablename__ = "users"
-        
-        id = Column(Integer, primary_key=True, index=True)
-        username = Column(String(50), unique=True, nullable=False)
-        email = Column(String(255), unique=True, nullable=False)
-        hashed_password = Column(String(255), nullable=False)
-        is_active = Column(Boolean, default=True)
-        created_at = Column(DateTime, default=datetime.datetime.utcnow)
-        updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

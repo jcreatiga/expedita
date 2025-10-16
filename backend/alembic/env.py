@@ -18,11 +18,11 @@ if config.config_file_name:
 
 # Import target metadata from the application (backend.main -> Base)
 try:
-    from backend.main import Base  # noqa: E402
-    target_metadata = Base.metadata
+    import backend.database
+    target_metadata = backend.database.Base.metadata
 except Exception as e:
     # If import fails, keep target_metadata = None; autogenerate will be limited
-    print("WARNING: Could not import Base from backend.main:", e)
+    print("WARNING: Could not import Base from backend.database:", e)
     target_metadata = None
 
 # Support DATABASE_URL environment variable (Railway)
