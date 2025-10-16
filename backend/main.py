@@ -14,6 +14,9 @@ import os
 import json
 import requests
 import urllib3
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Date, ForeignKey, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship, Session
 # Suppress InsecureRequestWarning for external API calls that use verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import asyncio
@@ -40,6 +43,20 @@ except Exception as e:
     create_engine = None
     sessionmaker = None
     relationship = None
+
+print(f"DEBUG: DB_AVAILABLE is {DB_AVAILABLE}")
+if DB_AVAILABLE:
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")
+    print(f"DEBUG: Attempting to connect to database at {DATABASE_URL}")
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    try:
+        # Try to connect to validate the engine
+        with engine.connect() as connection:
+            print("DEBUG: Successfully connected to the database.")
+    except Exception as e:
+        print(f"ERROR: Could not connect to the database. Error: {e}")
+        DB_AVAILABLE = False
 
 # Authentication configuration
 SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -129,6 +146,34 @@ class ProjectCase(ProjectCaseBase):
     class Config:
         from_attributes = True
 
+# Pydantic models for User
+class UserBase(BaseModel):
+    username: str
+    email: str
+    is_active: Optional[bool] = True
+
+class UserCreate(UserBase):
+    password: str
+
+class User(UserBase):
+    id: int
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    
+    class Config:
+        from_attributes = True
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
 # Database setup
 if DB_AVAILABLE:
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")
@@ -162,9 +207,6 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     with open("static/index.html", "r") as f:
@@ -187,13 +229,18 @@ def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] 
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-        return username
+        
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+        
+        return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
@@ -211,13 +258,81 @@ async def validate_radicado_exists(radicado: str) -> bool:
         print(f"Error validating radicado: {e}")
         return False
 
-# API endpoints
+# Helper function to get user ID from username
+def get_user_id_from_username(username: str, db: Session) -> int:
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return user.id
 
-# Helper function to get user ID from username (mock implementation)
-def get_user_id_from_username(username: str) -> int:
-    # In a real implementation, this would query the users table
-    # For now, return a mock user ID
-    return 1
+# Authentication routes
+@app.post("/auth/register", response_model=User)
+async def register(user: UserCreate, db: Session = Depends(get_db)):
+    # Check if user already exists
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Create new user
+    hashed_password = get_password_hash(user.password)
+    db_user = User(
+        username=user.username,
+        email=user.email,
+        hashed_password=hashed_password,
+        is_active=True
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.post("/auth/login", response_model=Token)
+async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == user_credentials.username).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    if not verify_password(user_credentials.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    
+    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/auth/me", response_model=User)
+async def read_users_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+@app.post("/auth/logout")
+async def logout():
+    # For JWT, logout is handled client-side by removing the token
+    return {"message": "Successfully logged out"}
+
+@app.post("/auth/forgot-password")
+async def forgot_password(email: str, db: Session = Depends(get_db)):
+    # Find user by email
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        # Don't reveal if email exists or not for security
+        return {"message": "If the email exists, a password reset link has been sent"}
+    
+    # In a real implementation, you would:
+    # 1. Generate a password reset token
+    # 2. Store it in the database with expiration
+    # 3. Send an email with the reset link
+    # For now, just return a success message
+    return {"message": "If the email exists, a password reset link has been sent"}
+
+# API endpoints
 
 # Endpoint to save a process (from consulta) - requires project_id
 @app.post("/api/saved")
@@ -236,7 +351,7 @@ async def save_process(
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
     
     # Check if user owns the project
-    user_id = get_user_id_from_username(current_user)
+    user_id = get_user_id_from_username(current_user.username, db)
     if project.user_id != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para acceder a este proyecto")
     
@@ -288,7 +403,7 @@ async def add_case_to_project(
     if not project:
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
     
-    user_id = get_user_id_from_username(current_user)
+    user_id = get_user_id_from_username(current_user.username, db)
     if project.user_id != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para acceder a este proyecto")
     
@@ -358,7 +473,7 @@ async def delete_saved_process(
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
     
     # Check if user owns the process
-    user_id = get_user_id_from_username(current_user)
+    user_id = get_user_id_from_username(current_user.username, db)
     if process.idUsuario != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para eliminar este proceso")
     
@@ -384,7 +499,7 @@ async def get_saved_processes(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    user_id = get_user_id_from_username(current_user)
+    user_id = get_user_id_from_username(current_user.username, db)
     
     # Get processes with their details
     processes = db.query(Proceso).options(
@@ -429,7 +544,7 @@ async def refresh_saved_processes(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    user_id = get_user_id_from_username(current_user)
+    user_id = get_user_id_from_username(current_user.username, db)
     
     # Get all processes for the user
     processes = db.query(Proceso).filter(Proceso.idUsuario == user_id).all()
@@ -461,7 +576,7 @@ async def refresh_project_cases(
     if not project:
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
     
-    user_id = get_user_id_from_username(current_user)
+    user_id = get_user_id_from_username(current_user.username, db)
     if project.user_id != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para acceder a este proyecto")
     
@@ -493,12 +608,12 @@ async def refresh_selected_project_cases(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    user_id = get_user_id_from_username(current_user.username, db)
     # Validate project exists and user owns it
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
     
-    user_id = get_user_id_from_username(current_user)
     if project.user_id != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para acceder a este proyecto")
     
@@ -553,6 +668,14 @@ async def refresh_all_projects(
     db.commit()
     
     return {"message": f"{total_updated} procesos actualizados en todos los proyectos"}
+
+# Rate limiting middleware
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="backend/static"), name="static")
 
 # SQLAlchemy models
 if DB_AVAILABLE:
@@ -616,3 +739,14 @@ if DB_AVAILABLE:
         
         # Relationship back to Project
         project = relationship("Project", back_populates="cases")
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        id = Column(Integer, primary_key=True, index=True)
+        username = Column(String(50), unique=True, nullable=False)
+        email = Column(String(255), unique=True, nullable=False)
+        hashed_password = Column(String(255), nullable=False)
+        is_active = Column(Boolean, default=True)
+        created_at = Column(DateTime, default=datetime.datetime.utcnow)
+        updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
